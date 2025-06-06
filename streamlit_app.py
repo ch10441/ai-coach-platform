@@ -127,7 +127,7 @@ def check_password():
     if st.button("로그인"):
         if password == correct_password:
             st.session_state["password_correct"] = True
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("비밀번호가 일치하지 않습니다.")
     return False
