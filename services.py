@@ -1,39 +1,63 @@
-# 파일명: services.py (최종 단순화 버전)
-
-import google.generativeai as genai
-import json
-import chromadb
+# 파일명: services.py (Pinecone RAG 적용 최종 버전)
 import os
-
-class RAGService:
-    """RAG 검색을 담당하는 서비스 (수정 없음, 이전과 동일)"""
-    def __init__(self, collection_name="insurance_coach"):
-        DB_PATH = "/data/chroma_db"
-        client = chromadb.PersistentClient(path=DB_PATH)
-        try:
-            self.collection = client.get_collection(name=collection_name)
-            print(f"✅ ChromaDB의 '{collection_name}' 컬렉션에 성공적으로 연결되었습니다.")
-        except ValueError:
-            raise ValueError(f"오류: ChromaDB에서 '{collection_name}' 컬렉션을 찾을 수 없습니다.")
-        self.embedding_model = 'models/text-embedding-004'
-
-    def retrieve_relevant_knowledge(self, query, top_k=3):
-        if not query.strip(): return []
-        query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding']
-        results = self.collection.query(query_embeddings=query_embedding, n_results=top_k)
-        return results['documents'][0]
+import json
+import pinecone
+import google.generativeai as genai
+from dotenv import load_dotenv
 
 class AICoachingService:
-    """AI 분석 및 프롬프트 구성을 담당하는 서비스"""
     def __init__(self):
-        # [수정됨] 복잡한 초기화 로직을 모두 제거하고, 모델만 설정합니다.
-        # API 키 설정(genai.configure)은 이제 app.py에서 담당합니다.
-        self.rag_service = RAGService()
-        self.model = genai.GenerativeModel(
-            'gemini-1.5-pro-latest',
-            generation_config={"response_mime_type": "application/json"}
-        )
-        print("✅ AI 코칭 서비스가 내부적으로 준비되었습니다.")
+        load_dotenv()
+        # Pinecone 및 Gemini API 초기화
+        self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
+        self.pinecone_env = os.getenv("PINECONE_ENVIRONMENT")
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
+
+        if not all([self.pinecone_api_key, self.pinecone_env, self.google_api_key]):
+            raise ValueError("API 키 또는 환경 변수가 설정되지 않았습니다.")
+            
+        genai.configure(api_key=self.google_api_key)
+        
+        # Pinecone 초기화
+        self.pinecone = pinecone.Pinecone(api_key=self.pinecone_api_key)
+        self.index_name = "insurance-coach"
+        self.embedding_model = 'models/text-embedding-004'
+        
+        # Pinecone 인덱스가 준비되었는지 확인 및 초기화
+        self._initialize_pinecone_index()
+
+        self.model = genai.GenerativeModel('gemini-1.5-pro-latest', generation_config={"response_mime_type": "application/json"})
+        print("✅ AI 코칭 서비스가 (Pinecone과 함께) 성공적으로 초기화되었습니다.")
+
+    def _initialize_pinecone_index(self):
+        """Pinecone 인덱스를 확인하고, 비어있으면 지식 베이스로 채웁니다."""
+        if self.index_name not in self.pinecone.list_indexes().names():
+             raise ValueError(f"Pinecone에 '{self.index_name}' 인덱스가 없습니다. Pinecone 대시보드에서 먼저 생성해주세요.")
+        
+        self.index = self.pinecone.Index(self.index_name)
+        stats = self.index.describe_index_stats()
+        
+        if stats['total_vector_count'] == 0:
+            print(f"Pinecone 인덱스 '{self.index_name}'이 비어있어, 지식 베이스로 채웁니다...")
+            try:
+                with open("knowledge_base.txt", "r", encoding="utf-8") as f:
+                    chunks = [c.strip() for c in f.read().split("---") if c.strip()]
+                if chunks:
+                    print(f"{len(chunks)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
+                    embeddings = genai.embed_content(model=self.embedding_model, content=chunks)['embedding']
+                    self.index.upsert(vectors=zip([f"chunk_{i}" for i in range(len(chunks))], embeddings, [{"text": chunk} for chunk in chunks]))
+                    print("✅ Pinecone 인덱스에 데이터 저장 완료.")
+            except FileNotFoundError:
+                print("⚠️ 경고: knowledge_base.txt 파일을 찾을 수 없어 Pinecone을 초기화하지 못했습니다.")
+            except Exception as e:
+                print(f"🔥 Pinecone 초기화 중 오류: {e}")
+
+    def retrieve_relevant_knowledge(self, query, top_k=3):
+        """사용자의 질문과 가장 관련성 높은 지식을 Pinecone에서 찾아 반환합니다."""
+        if not query.strip(): return []
+        query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding']
+        results = self.index.query(vector=query_embedding, top_k=top_k, include_metadata=True)
+        return [match['metadata']['text'] for match in results['matches']]
 
     def _build_prompt(self, consultation_text, history, relevant_knowledge):
         # 프롬프트 내용은 이전 최종본과 동일합니다.
@@ -104,8 +128,8 @@ class AICoachingService:
         """
 
     def analyze_consultation(self, consultation_text, history):
-        # RAG 검색 로직과 API 호출 로직은 이전과 동일합니다.
-        relevant_knowledge = self.rag_service.retrieve_relevant_knowledge(consultation_text)
+        # 이 메소드 로직은 이제 RAG 검색을 위해 retrieve_relevant_knowledge를 호출합니다.
+        relevant_knowledge = self.retrieve_relevant_knowledge(consultation_text)
         prompt = self._build_prompt(consultation_text, history, relevant_knowledge)
         try:
             response = self.model.generate_content(prompt)
