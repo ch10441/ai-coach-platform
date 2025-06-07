@@ -1,6 +1,7 @@
-# 파일명: manage_users.py (메뉴 기능이 포함된 최종 완성본)
+# 파일명: manage_users.py (DB 테이블 자동 생성 기능이 추가된 최종 버전)
 
 import getpass
+# app.py와 models.py에서 필요한 부분들을 가져옵니다.
 from app import app, db, User
 
 def add_user():
@@ -11,7 +12,7 @@ def add_user():
         if User.query.filter_by(username=username).first():
             print(f"🔥 오류: 아이디 '{username}'은(는) 이미 존재합니다.")
             return
-
+    
     full_name = input(f"'{username}' 님의 전체 이름을 입력하세요: ")
     branch_name = input(f"'{username}' 님의 지점명을 입력하세요: ")
     gaia_code = input(f"'{username}' 님의 가이아 코드번호를 입력하세요: ")
@@ -23,7 +24,6 @@ def add_user():
         return
 
     with app.app_context():
-        # is_approved는 기본값 False로 생성됨
         new_user = User(
             username=username,
             full_name=full_name,
@@ -46,7 +46,7 @@ def list_users():
             approved_status = "승인됨" if user.is_approved else "승인 대기중"
             print(f"- 아이디: {user.username}, 이름: {user.full_name}, 역할: {user.role}, 상태: {approved_status}")
     print("--------------------------")
-
+        
 def set_user_as_admin():
     """특정 사용자를 'admin' 역할로 지정하고 즉시 승인 처리하는 함수"""
     username = input("관리자로 지정할 사용자의 아이디를 입력하세요: ")
@@ -54,7 +54,7 @@ def set_user_as_admin():
         user = User.query.filter_by(username=username).first()
         if user:
             user.role = 'admin'
-            user.is_approved = True # 관리자는 바로 승인 상태로 변경
+            user.is_approved = True
             db.session.commit()
             print(f"✅ 성공! 사용자 '{username}' 님을 'admin' 역할로 지정하고 계정을 활성화했습니다.")
         else:
@@ -62,6 +62,12 @@ def set_user_as_admin():
 
 def main():
     """사용자 관리 메뉴를 보여주고 입력을 받는 메인 함수"""
+    # [수정됨] 스크립트 실행 시, 항상 DB 테이블이 존재하는지 확인하고 없으면 생성합니다.
+    with app.app_context():
+        print("데이터베이스 테이블 구조를 확인하고, 필요시 생성합니다...")
+        db.create_all()
+        print("✅ 데이터베이스 테이블이 준비되었습니다.")
+
     while True:
         print("\n[사용자 관리 메뉴 (서버 직접 제어)]")
         print("1. 팀원 추가하기")
