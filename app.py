@@ -1,77 +1,34 @@
-# 파일명: app.py (모든 것을 포함한 최종 완성본)
-import os, json, re, google.generativeai as genai, chromadb
+import os
+import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from models import db, bcrypt, User
 from services import AICoachingService
 from dotenv import load_dotenv
 
-# --- 1. Flask 앱 및 경로 설정 ---
+# 1. Flask 앱 및 DB 설정
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
-DATA_DIR = "/data"
-SQLALCHEMY_DB_PATH = os.path.join(DATA_DIR, 'users.db')
-CHROMA_DB_PATH = os.path.join(DATA_DIR, 'chroma_db')
-KNOWLEDGE_BASE_FILE = "knowledge_base.txt"
-EMBEDDING_MODEL = 'models/text-embedding-004'
-COLLECTION_NAME = "insurance_coach"
-
-
-# --- 2. DB설정 설정 ---
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL') or f'sqlite:///{SQLALCHEMY_DB_PATH}'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 bcrypt.init_app(app)
 
-# --- 5. 앱 시작 시 실행될 단일 초기화 함수 정의 ---
-def initialize_app():
-    """서버 시작 시 모든 시스템을 준비하는 함수."""
-    print("--- [시스템 초기화 시작] ---")
-    
-    # Google API 키 설정
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key: raise ValueError("초기화 실패: GOOGLE_API_KEY 환경 변수 없음.")
-    genai.configure(api_key=api_key)
-    print("✅ Google API 키 설정 완료.")
-
-    # 사용자 DB 테이블 생성
+# 2. 앱 시작 시 사용자 DB 테이블 생성 확인
+with app.app_context():
     db.create_all()
-    print("✅ 사용자 DB 테이블 준비 완료.")
+    print("✅ 사용자 DB 테이블이 준비되었습니다.")
 
-    # RAG 벡터 DB 생성
-    try:
-        client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        if COLLECTION_NAME not in [c.name for c in client.list_collections()]:
-            print(f"'{COLLECTION_NAME}' 컬렉션이 없어 새로 생성합니다...")
-            collection = client.create_collection(name=COLLECTION_NAME)
-            # GitHub에 업로드된 knowledge_base.txt 파일을 읽어야 합니다.
-            if os.path.exists(KNOWLEDGE_BASE_FILE):
-                with open(KNOWLEDGE_BASE_FILE, "r", encoding="utf-8") as f:
-                    chunks = [c.strip() for c in f.read().split("---") if c.strip()]
-                if chunks:
-                    embeddings = genai.embed_content(model=EMBEDDING_MODEL, content=chunks)['embedding']
-                    collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
-                    print(f"✅ RAG DB에 {len(chunks)}개의 정보 저장 완료.")
-            else:
-                print(f"⚠️ 경고: '{KNOWLEDGE_BASE_FILE}' 파일이 없어 RAG DB를 채우지 못했습니다.")
-        else:
-            print("✅ RAG DB가 이미 존재합니다.")
-    except Exception as e:
-        print(f"🔥 RAG DB 설정 중 오류 발생: {e}")
-        raise e
-    print("--- [시스템 초기화 성공] ---")
-
+# 3. AI 서비스 초기화 실행
 ai_service = None
 try:
-    with app.app_context():
-        initialize_app()
+    # 이 과정에서 services.py의 __init__이 실행되며 Pinecone도 초기화됩니다.
     ai_service = AICoachingService()
-    print("✅ AI 코칭 서비스가 성공적으로 활성화되었습니다.")
 except Exception as e:
     print(f"🔥 시스템 전체 초기화 과정에서 오류가 발생했습니다: {e}")
 
-# --- 6. API 엔드포인트들 ---
+# --- 4. API 엔드포인트들 ---
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -173,6 +130,6 @@ def analyze():
         return jsonify({"success": False, "error": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요."}), 500
 
 
-# --- 7. Flask 개발 서버 실행 (로컬 테스트용) ---
+# --- 5. Flask 개발 서버 실행 (로컬 테스트용) ---
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=False)

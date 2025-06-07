@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 class AICoachingService:
     def __init__(self):
         load_dotenv()
-        # Pinecone 및 Gemini API 초기화
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
         self.pinecone_env = os.getenv("PINECONE_ENVIRONMENT")
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -18,19 +17,16 @@ class AICoachingService:
             
         genai.configure(api_key=self.google_api_key)
         
-        # Pinecone 초기화
         self.pinecone = pinecone.Pinecone(api_key=self.pinecone_api_key)
         self.index_name = "insurance-coach"
         self.embedding_model = 'models/text-embedding-004'
         
-        # Pinecone 인덱스가 준비되었는지 확인 및 초기화
         self._initialize_pinecone_index()
 
         self.model = genai.GenerativeModel('gemini-1.5-pro-latest', generation_config={"response_mime_type": "application/json"})
         print("✅ AI 코칭 서비스가 (Pinecone과 함께) 성공적으로 초기화되었습니다.")
 
     def _initialize_pinecone_index(self):
-        """Pinecone 인덱스를 확인하고, 비어있으면 지식 베이스로 채웁니다."""
         if self.index_name not in self.pinecone.list_indexes().names():
              raise ValueError(f"Pinecone에 '{self.index_name}' 인덱스가 없습니다. Pinecone 대시보드에서 먼저 생성해주세요.")
         
@@ -45,7 +41,7 @@ class AICoachingService:
                 if chunks:
                     print(f"{len(chunks)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
                     embeddings = genai.embed_content(model=self.embedding_model, content=chunks)['embedding']
-                    self.index.upsert(vectors=zip([f"chunk_{i}" for i in range(len(chunks))], embeddings, [{"text": chunk} for chunk in chunks]))
+                    self.index.upsert(vectors=[(f"chunk_{i}", emb, {"text": chunk}) for i, (emb, chunk) in enumerate(zip(embeddings, chunks))])
                     print("✅ Pinecone 인덱스에 데이터 저장 완료.")
             except FileNotFoundError:
                 print("⚠️ 경고: knowledge_base.txt 파일을 찾을 수 없어 Pinecone을 초기화하지 못했습니다.")
@@ -53,9 +49,8 @@ class AICoachingService:
                 print(f"🔥 Pinecone 초기화 중 오류: {e}")
 
     def retrieve_relevant_knowledge(self, query, top_k=3):
-        """사용자의 질문과 가장 관련성 높은 지식을 Pinecone에서 찾아 반환합니다."""
         if not query.strip(): return []
-        query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding']
+        query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding'][0]
         results = self.index.query(vector=query_embedding, top_k=top_k, include_metadata=True)
         return [match['metadata']['text'] for match in results['matches']]
 
@@ -128,13 +123,12 @@ class AICoachingService:
         """
 
     def analyze_consultation(self, consultation_text, history):
-        # 이 메소드 로직은 이제 RAG 검색을 위해 retrieve_relevant_knowledge를 호출합니다.
         relevant_knowledge = self.retrieve_relevant_knowledge(consultation_text)
         prompt = self._build_prompt(consultation_text, history, relevant_knowledge)
         try:
             response = self.model.generate_content(prompt)
             coaching_result = json.loads(response.text)
-            new_history = history + [f"---고객/설계사 대화---\n{consultation_text}", f"---AI 코칭 요약---\n..."]
+            new_history = history + [f"---고객/설계사 대화---\n{consultation_text}", f"---AI 코칭 요약---\n고객 의도: {coaching_result.get('customer_intent')}"]
             return coaching_result, new_history
         except Exception as e:
             print(f"🔥 AI 분석 중 오류 발생 (services.py): {e}")
