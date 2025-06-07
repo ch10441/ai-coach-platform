@@ -77,25 +77,46 @@ def display_login_page():
                     register_user(payload)
 
 def display_coaching_result(result):
-    """AI 분석 결과를 탭 형태로 예쁘게 출력하는 함수"""
+    """AI 분석 결과를 '반론 대응 전략' 기능에 맞게 탭 형태로 예쁘게 출력하는 함수"""
     st.subheader("2. AI 코칭 결과 확인하기")
     if not result:
         st.info("상담 내용을 입력하고 'AI 코칭 시작하기' 버튼을 누르면 여기에 분석 결과가 표시됩니다.")
         return
 
-    tab1, tab2, tab3 = st.tabs(["💡 종합 분석", "📊 보장 분석", "💬 추천 멘트"])
+    # [수정됨] 탭의 이름과 순서를 새로운 기능에 맞게 변경합니다.
+    tab1, tab2, tab3 = st.tabs(["💡 종합 분석", "🛡️ 반론 대응 전략", "💬 추천 멘트"])
+
+    # --- 탭 1: 종합 분석 (이전과 동일) ---
     with tab1:
-        st.markdown(f"##### 💡 고객 핵심 니즈"); st.info(result.get('customer_intent', '분석 정보 없음'))
+        st.markdown("##### 💡 고객 핵심 니즈")
+        st.info(result.get('customer_intent', '분석 정보 없음'))
         col1, col2 = st.columns(2)
-        with col1: st.markdown(f"##### 💖 고객 감정 상태"); st.info(result.get('customer_sentiment', '분석 정보 없음'))
-        with col2: st.markdown(f"##### 👤 추정 고객 성향"); st.info(result.get('customer_profile_guess', '분석 정보 없음'))
-        st.markdown("---"); st.markdown("##### 🧭 다음 추천 진행 방향"); st.success(result.get('next_step_strategy', '분석 정보 없음'))
+        with col1:
+            st.markdown("##### 💖 고객 감정 상태")
+            st.info(result.get('customer_sentiment', '분석 정보 없음'))
+        with col2:
+            st.markdown("##### 👤 추정 고객 성향")
+            st.info(result.get('customer_profile_guess', '분석 정보 없음'))
+        st.markdown("---")
+        st.markdown("##### 🧭 다음 추천 진행 방향")
+        st.success(result.get('next_step_strategy', '분석 정보 없음'))
+
+    # --- 탭 2: [수정됨] 반론 대응 전략 ---
     with tab2:
-        st.markdown("##### 📊 3단계 보장 기준 분석 (언급된 내용 기반)")
-        analysis_data = result.get('three_stage_coverage_analysis', {})
-        st.markdown(f"**1️⃣ 실손의료보험:** {analysis_data.get('stage_1_actual_cost_insurance', '정보 없음')}")
-        st.markdown(f"**2️⃣ 주요 진단비:** {analysis_data.get('stage_2_diagnosis_fund', '정보 없음')}")
-        st.markdown(f"**3️⃣ 수술비 보장:** {analysis_data.get('stage_3_surgery_fund', '정보 없음')}")
+        st.markdown("##### 🛡️ 고객 반론 예측 및 대응 전략")
+        # AI가 분석한 JSON에서 'objection_handling_strategy' 부분을 가져옵니다.
+        strategy_data = result.get('objection_handling_strategy', {})
+        
+        st.markdown("**🎯 AI가 예측한 고객의 다음 반론 또는 망설임 포인트:**")
+        st.warning(strategy_data.get('predicted_objection', '분석된 반론 없음'))
+
+        st.markdown("**💡 추천 대응 전략:**")
+        st.success(strategy_data.get('counter_strategy', '분석된 전략 없음'))
+        
+        st.markdown("**🗣️ 추천 대응 멘트 예시:**")
+        st.info(strategy_data.get('example_script', '추천 멘트 없음'))
+
+    # --- 탭 3: 추천 멘트 (이전과 동일) ---
     with tab3:
         st.markdown("##### 💬 AI 추천 멘트 옵션")
         for i, action in enumerate(result.get('recommended_actions', [])):
