@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from pypdf import PdfReader
 
 # --- 기본 설정 ---
-BACKEND_API_URL = "http://127.0.0.1:5001"
+BACKEND_API_URL = "https://ai-coach-platform-tz4n.onrender.com"
 
 # --------------------------------------------------------------------------
 # 1. 기능별 함수 정의
