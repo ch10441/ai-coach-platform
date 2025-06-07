@@ -3,86 +3,90 @@
 import os
 import json
 import re
+import google.generativeai as genai
+import chromadb
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from models import db, bcrypt, User
 from services import AICoachingService
-import chromadb
-import google.generativeai as genai
 from dotenv import load_dotenv
 
-# Flask 앱 초기화
+# --- 1. Flask 앱 설정 ---
 app = Flask(__name__)
 CORS(app)
 
-# 데이터베이스 경로를 Render의 영구 디스크로 설정
+# --- 2. 환경변수 및 경로 설정 ---
+load_dotenv()
 DATA_DIR = "/data"
 SQLALCHEMY_DB_PATH = os.path.join(DATA_DIR, 'users.db')
 CHROMA_DB_PATH = os.path.join(DATA_DIR, 'chroma_db')
+KNOWLEDGE_BASE_FILE = "knowledge_base.txt"
+EMBEDDING_MODEL = 'models/text-embedding-004'
+COLLECTION_NAME = "insurance_coach"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+# --- 3. 데이터베이스 및 확장 기능 설정 ---
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{SQLALCHEMY_DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# Flask 확장 기능 초기화
 db.init_app(app)
 bcrypt.init_app(app)
 
-# AI 코칭 서비스 인스턴스 생성 (아직 초기화는 아님)
-ai_service = None
-
-def initialize_systems():
-    """
-    앱 실행 시 필요한 모든 데이터베이스와 서비스를 초기화하는 함수.
-    """
-    global ai_service
-    print("시스템 초기화를 시작합니다...")
-
-    # 1. 사용자 정보 DB 테이블 생성 또는 확인
-    print("사용자 DB 테이블 생성을 확인합니다...")
-    db.create_all()
-    print("✅ 사용자 DB 테이블 준비 완료.")
-
-    # 2. RAG 벡터 DB 생성 또는 확인 (없을 경우에만)
-    print("RAG 벡터 DB 생성을 확인합니다...")
-    try:
-        # .env 파일 로드 (API 키 필요)
-        load_dotenv()
+# --- 4. 앱 시작 시 실행될 초기화 함수 ---
+def initialize_on_startup():
+    """앱이 시작될 때 단 한 번, 모든 시스템을 올바른 순서로 준비합니다."""
+    with app.app_context():
+        print("--- [시스템 초기화 시작] ---")
+        
+        # 1. Google API 키 설정
+        print("1. Google API 키를 설정합니다...")
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("RAG DB 설정 실패: GOOGLE_API_KEY가 없습니다.")
+            raise ValueError("초기화 실패: GOOGLE_API_KEY 환경 변수를 찾을 수 없습니다.")
         genai.configure(api_key=api_key)
+        print("✅ Google API 키 설정 완료.")
 
-        client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        collection_name = "insurance_coach"
+        # 2. 사용자 정보 DB 테이블 생성 확인
+        print("2. 사용자 DB 테이블을 확인 및 생성합니다...")
+        db.create_all()
+        print("✅ 사용자 DB 테이블 준비 완료.")
 
-        if collection_name not in [c.name for c in client.list_collections()]:
-            print(f"'{collection_name}' 컬렉션이 없습니다. 새로 생성합니다...")
-            collection = client.create_collection(name=collection_name)
-
-            with open("knowledge_base.txt", "r", encoding="utf-8") as f:
-                content = f.read()
-            chunks = [chunk.strip() for chunk in content.split("---") if chunk.strip()]
-
-            if chunks:
-                print(f"{len(chunks)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
-                embedding_model = 'models/text-embedding-004'
-                embeddings = genai.embed_content(model=embedding_model, content=chunks)['embedding']
-                collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
-                print("✅ RAG 데이터베이스가 성공적으로 생성되었습니다.")
+        # 3. RAG 벡터 DB 생성 확인
+        print("3. RAG 벡터 DB를 확인 및 생성합니다...")
+        try:
+            client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+            if COLLECTION_NAME not in [c.name for c in client.list_collections()]:
+                print(f"'{COLLECTION_NAME}' 컬렉션이 없어 새로 생성합니다...")
+                collection = client.create_collection(name=COLLECTION_NAME)
+                with open(KNOWLEDGE_BASE_FILE, "r", encoding="utf-8") as f:
+                    chunks = [chunk.strip() for chunk in f.read().split("---") if chunk.strip()]
+                if chunks:
+                    embeddings = genai.embed_content(model=EMBEDDING_MODEL, content=chunks)['embedding']
+                    collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
+                    print(f"✅ RAG DB에 {len(chunks)}개의 정보 저장 완료.")
+                else:
+                    print("지식 베이스 파일이 비어있습니다.")
             else:
-                print("지식 베이스 파일이 비어있어 RAG DB를 생성하지 않습니다.")
-        else:
-            print("✅ RAG 데이터베이스가 이미 존재합니다.")
+                print("✅ RAG DB가 이미 존재합니다.")
+        except Exception as e:
+            print(f"🔥 RAG DB 설정 중 오류 발생: {e}")
+            # 이 오류는 심각하므로 앱 실행을 중단시킬 수 있습니다.
+            # 또는, ai_service 없이 실행되도록 할 수도 있습니다.
+            raise e
 
-    except Exception as e:
-        print(f"🔥 RAG 데이터베이스 설정 중 오류 발생: {e}")
+        print("--- [시스템 초기화 성공] ---")
 
-    # 3. AI 코칭 서비스 최종 초기화
+# --- 5. AI 서비스 인스턴스 생성 ---
+ai_service = None
+try:
+    # 앱 컨텍스트 내에서 초기화 함수를 호출합니다.
+    with app.app_context():
+        initialize_on_startup()
+    # 모든 초기화가 성공한 후에 AI 서비스를 생성합니다.
     ai_service = AICoachingService()
-    print("✅ AI 코칭 서비스가 성공적으로 초기화되었습니다.")
+    print("✅ AI 코칭 서비스가 성공적으로 활성화되었습니다.")
+except Exception as e:
+    print(f"🔥 시스템 초기화 과정에서 심각한 오류가 발생했습니다: {e}")
 
-# --- API 엔드포인트들 ---
-
+# --- 6. API 엔드포인트들 ---
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -184,8 +188,6 @@ def analyze():
         return jsonify({"success": False, "error": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요."}), 500
 
 
-# Flask 서버 실행
+# --- 7. Flask 서버 실행 ---
 if __name__ == '__main__':
-    with app.app_context():
-        initialize_database() # 앱 실행 전에 데이터베이스 초기화 함수 호출
-    app.run(host='0.0.0.0', port=5001, debug=False) # 운영 환경에서는 Debug 모드를 끕니다.
+    app.run(host='0.0.0.0', port=5001, debug=False)
