@@ -7,21 +7,37 @@ from services import AICoachingService
 from models import db, bcrypt, User
 import os
 
+# [추가됨] 데이터베이스 초기 설정을 위한 저희의 새로운 함수를 불러옵니다.
+from db_setup import setup_database
+
 app = Flask(__name__)
 CORS(app)
 
 # 데이터베이스 설정
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(os.path.abspath(os.path.dirname(__file__)), 'users.db')
+db_path = os.path.join('/data', 'users.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # 데이터베이스와 Bcrypt를 Flask 앱과 연결
 db.init_app(app)
 bcrypt.init_app(app)
 
-# 앱 컨텍스트 내에서 데이터베이스 테이블 생성
+# [수정됨] 앱 컨텍스트 내에서 모든 DB 설정을 한 번에 처리합니다.
 with app.app_context():
+    # 1. 사용자 정보 DB 테이블 생성 또는 확인
     db.create_all()
-    print("✅ 데이터베이스 테이블이 준비되었습니다.")
+    print("✅ 사용자 DB 테이블이 준비되었습니다.")
+
+    # ▼▼▼ [2번 추가] 앱이 시작될 때 스스로 RAG DB가 있는지 확인하고, 없으면 생성합니다. ▼▼▼
+    try:
+        # 이 함수를 실행하려면 GOOGLE_API_KEY가 필요하므로,
+        # AICoachingService 초기화 이후로 옮기는 것이 더 안정적일 수 있습니다.
+        # 하지만 지금 구조에서는 여기서 먼저 실행해보겠습니다.
+        # 만약 여기서 API 키 관련 오류가 발생하면 AICoachingService 초기화 이후로 옮기면 됩니다.
+        setup_database()
+    except Exception as e:
+        print(f"🔥 RAG 데이터베이스 설정 중 오류 발생: {e}")
+        print("   (하지만 서버는 계속 실행됩니다.)")
 
 # AI 코칭 서비스 초기화
 try:
