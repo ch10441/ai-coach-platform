@@ -5,20 +5,26 @@ from flask_cors import CORS
 from models import db, bcrypt, User
 from services import AICoachingService
 from dotenv import load_dotenv
+from pypdf import PdfReader
+from docx import Document
+from models import db, bcrypt, User
+from services import AICoachingService
 
 # 1. Flask 앱 및 DB 설정
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
+
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 bcrypt.init_app(app)
 
+
 # 2. 앱 시작 시 사용자 DB 테이블 생성 확인
 with app.app_context():
     db.create_all()
-    print("✅ 사용자 DB 테이블이 준비되었습니다.")
+    print("✅ 사용자 DB 테이블이 준비되었습니다.") 
 
 # 3. AI 서비스 초기화 실행
 ai_service = None
@@ -132,4 +138,7 @@ def analyze():
 
 # --- 5. Flask 개발 서버 실행 (로컬 테스트용) ---
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+        print("✅ 사용자 DB 테이블이 준비되었습니다.")
     app.run(host='0.0.0.0', port=5001, debug=False)

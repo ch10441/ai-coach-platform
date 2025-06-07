@@ -4,6 +4,8 @@ import json
 import pinecone
 import google.generativeai as genai
 from dotenv import load_dotenv
+from pypdf import PdfReader
+from docx import Document
 
 class AICoachingService:
     def __init__(self):
@@ -20,33 +22,64 @@ class AICoachingService:
         self.pinecone = pinecone.Pinecone(api_key=self.pinecone_api_key)
         self.index_name = "insurance-coach"
         self.embedding_model = 'models/text-embedding-004'
-        
         self._initialize_pinecone_index()
 
         self.model = genai.GenerativeModel('gemini-1.5-pro-latest', generation_config={"response_mime_type": "application/json"})
         print("✅ AI 코칭 서비스가 (Pinecone과 함께) 성공적으로 초기화되었습니다.")
 
     def _initialize_pinecone_index(self):
+        """Pinecone 인덱스를 확인하고, 비어있으면 knowledge_files 폴더의 문서들로 채웁니다."""
         if self.index_name not in self.pinecone.list_indexes().names():
+             # Pinecone 대시보드에서 미리 인덱스를 생성해야 합니다.
              raise ValueError(f"Pinecone에 '{self.index_name}' 인덱스가 없습니다. Pinecone 대시보드에서 먼저 생성해주세요.")
         
         self.index = self.pinecone.Index(self.index_name)
         stats = self.index.describe_index_stats()
         
+        # 인덱스가 비어있을 경우에만 파일 읽기 및 저장을 수행합니다.
         if stats['total_vector_count'] == 0:
             print(f"Pinecone 인덱스 '{self.index_name}'이 비어있어, 지식 베이스로 채웁니다...")
-            try:
-                with open("knowledge_base.txt", "r", encoding="utf-8") as f:
-                    chunks = [c.strip() for c in f.read().split("---") if c.strip()]
-                if chunks:
-                    print(f"{len(chunks)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
-                    embeddings = genai.embed_content(model=self.embedding_model, content=chunks)['embedding']
-                    self.index.upsert(vectors=[(f"chunk_{i}", emb, {"text": chunk}) for i, (emb, chunk) in enumerate(zip(embeddings, chunks))])
-                    print("✅ Pinecone 인덱스에 데이터 저장 완료.")
-            except FileNotFoundError:
-                print("⚠️ 경고: knowledge_base.txt 파일을 찾을 수 없어 Pinecone을 초기화하지 못했습니다.")
-            except Exception as e:
-                print(f"🔥 Pinecone 초기화 중 오류: {e}")
+            KNOWLEDGE_DIR = "knowledge_files"
+            all_chunks = []
+            if os.path.exists(KNOWLEDGE_DIR):
+                print(f"'{KNOWLEDGE_DIR}' 폴더에서 문서를 읽습니다...")
+                for filename in os.listdir(KNOWLEDGE_DIR):
+                    filepath = os.path.join(KNOWLEDGE_DIR, filename)
+                    text = ""
+                    if filename.endswith(".pdf"):
+                        try:
+                            reader = PdfReader(filepath)
+                            text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+                        except Exception as e: print(f"🔥 PDF 파일 '{filename}' 처리 중 오류: {e}")
+                    elif filename.endswith(".docx"):
+                        try:
+                            doc = Document(filepath)
+                            text = "\n".join([para.text for para in doc.paragraphs])
+                        except Exception as e: print(f"🔥 DOCX 파일 '{filename}' 처리 중 오류: {e}")
+                    
+                    if text.strip():
+                        # 여기서는 파일 전체를 하나의 정보 조각(청크)으로 사용합니다.
+                        all_chunks.append(text)
+                        print(f"  - '{filename}' 파일 로드 완료.")
+            
+            if all_chunks:
+                print(f"총 {len(all_chunks)}개의 문서를 벡터로 변환하여 저장합니다...")
+                embeddings = genai.embed_content(model=self.embedding_model, content=all_chunks)['embedding']
+                # Pinecone에 업로드할 형식으로 데이터를 준비합니다.
+                vectors_to_upsert = []
+                for i, (embedding, chunk) in enumerate(zip(embeddings, all_chunks)):
+                    vectors_to_upsert.append((f"doc_{i}", embedding, {"text": chunk}))
+                
+                # 데이터를 나눠서 업로드 (한 번에 너무 많은 양을 보내지 않기 위함)
+                batch_size = 100
+                for i in range(0, len(vectors_to_upsert), batch_size):
+                    batch = vectors_to_upsert[i:i + batch_size]
+                    self.index.upsert(vectors=batch)
+                print(f"✅ Pinecone 인덱스에 {len(all_chunks)}개의 문서 정보 저장 완료.")
+            else:
+                print("⚠️ 경고: 'knowledge_files' 폴더에 분석할 문서가 없습니다.")
+        else:
+            print(f"✅ RAG DB '{self.index_name}'에 이미 {stats['total_vector_count']}개의 데이터가 존재합니다.")
 
     def retrieve_relevant_knowledge(self, query, top_k=3):
         if not query.strip(): return []
