@@ -2,11 +2,8 @@ import os
 import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from models import db, bcrypt, User
-from services import AICoachingService
 from dotenv import load_dotenv
-from pypdf import PdfReader
-from docx import Document
+
 from models import db, bcrypt, User
 from services import AICoachingService
 
@@ -14,7 +11,6 @@ from services import AICoachingService
 app = Flask(__name__)
 CORS(app)
 load_dotenv()
-
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
@@ -29,7 +25,7 @@ with app.app_context():
 # 3. AI 서비스 초기화 실행
 ai_service = None
 try:
-    # 이 과정에서 services.py의 __init__이 실행되며 Pinecone도 초기화됩니다.
+    # 이 한 줄만으로 services.py 안에서 모든 초기화(API키, Pinecone, RAG DB)가 진행됩니다.
     ai_service = AICoachingService()
 except Exception as e:
     print(f"🔥 시스템 전체 초기화 과정에서 오류가 발생했습니다: {e}")
@@ -138,7 +134,4 @@ def analyze():
 
 # --- 5. Flask 개발 서버 실행 (로컬 테스트용) ---
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        print("✅ 사용자 DB 테이블이 준비되었습니다.")
     app.run(host='0.0.0.0', port=5001, debug=False)

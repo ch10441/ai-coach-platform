@@ -15,10 +15,11 @@ class AICoachingService:
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
 
         if not all([self.pinecone_api_key, self.pinecone_env, self.google_api_key]):
-            raise ValueError("API 키 또는 환경 변수가 설정되지 않았습니다.")
+            raise ValueError("초기화 실패: Pinecone 또는 Google API 키/환경 변수가 설정되지 않았습니다.")
             
         genai.configure(api_key=self.google_api_key)
         
+        print("Pinecone 서비스를 초기화하고 인덱스를 준비합니다...")
         self.pinecone = pinecone.Pinecone(api_key=self.pinecone_api_key)
         self.index_name = "insurance-coach"
         self.embedding_model = 'models/text-embedding-004'
@@ -30,7 +31,6 @@ class AICoachingService:
     def _initialize_pinecone_index(self):
         """Pinecone 인덱스를 확인하고, 비어있으면 knowledge_files 폴더의 문서들로 채웁니다."""
         if self.index_name not in self.pinecone.list_indexes().names():
-             # Pinecone 대시보드에서 미리 인덱스를 생성해야 합니다.
              raise ValueError(f"Pinecone에 '{self.index_name}' 인덱스가 없습니다. Pinecone 대시보드에서 먼저 생성해주세요.")
         
         self.index = self.pinecone.Index(self.index_name)
@@ -42,7 +42,6 @@ class AICoachingService:
             KNOWLEDGE_DIR = "knowledge_files"
             all_chunks = []
             if os.path.exists(KNOWLEDGE_DIR):
-                print(f"'{KNOWLEDGE_DIR}' 폴더에서 문서를 읽습니다...")
                 for filename in os.listdir(KNOWLEDGE_DIR):
                     filepath = os.path.join(KNOWLEDGE_DIR, filename)
                     text = ""
@@ -58,19 +57,16 @@ class AICoachingService:
                         except Exception as e: print(f"🔥 DOCX 파일 '{filename}' 처리 중 오류: {e}")
                     
                     if text.strip():
-                        # 여기서는 파일 전체를 하나의 정보 조각(청크)으로 사용합니다.
                         all_chunks.append(text)
                         print(f"  - '{filename}' 파일 로드 완료.")
             
             if all_chunks:
                 print(f"총 {len(all_chunks)}개의 문서를 벡터로 변환하여 저장합니다...")
                 embeddings = genai.embed_content(model=self.embedding_model, content=all_chunks)['embedding']
-                # Pinecone에 업로드할 형식으로 데이터를 준비합니다.
                 vectors_to_upsert = []
                 for i, (embedding, chunk) in enumerate(zip(embeddings, all_chunks)):
-                    vectors_to_upsert.append((f"doc_{i}", embedding, {"text": chunk}))
+                    vectors_to_upsert.append(pinecone.Vector(id=f"doc_{i}", values=embedding, metadata={"text": chunk}))
                 
-                # 데이터를 나눠서 업로드 (한 번에 너무 많은 양을 보내지 않기 위함)
                 batch_size = 100
                 for i in range(0, len(vectors_to_upsert), batch_size):
                     batch = vectors_to_upsert[i:i + batch_size]
