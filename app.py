@@ -1,13 +1,9 @@
 # 파일명: app.py (모든 것을 포함한 최종 완성본)
-import os
-import json
-import re
+import os, json, re, google.generativeai as genai, chromadb
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from models import db, bcrypt, User
 from services import AICoachingService
-import chromadb
-import google.generativeai as genai
 from dotenv import load_dotenv
 
 # --- 1. Flask 앱 및 경로 설정 ---
@@ -32,9 +28,6 @@ bcrypt.init_app(app)
 def initialize_app():
     """서버 시작 시 모든 시스템을 준비하는 함수."""
     print("--- [시스템 초기화 시작] ---")
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-        print(f"✅ 영구 저장 경로 '{DATA_DIR}' 생성 완료.")
     
     # Google API 키 설정
     api_key = os.getenv("GOOGLE_API_KEY")
@@ -47,18 +40,26 @@ def initialize_app():
     print("✅ 사용자 DB 테이블 준비 완료.")
 
     # RAG 벡터 DB 생성
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    if COLLECTION_NAME not in [c.name for c in client.list_collections()]:
-        print(f"'{COLLECTION_NAME}' 컬렉션이 없어 새로 생성합니다...")
-        collection = client.create_collection(name=COLLECTION_NAME)
-        with open(KNOWLEDGE_BASE_FILE, "r", encoding="utf-8") as f:
-            chunks = [c.strip() for c in f.read().split("---") if c.strip()]
-        if chunks:
-            embeddings = genai.embed_content(model=EMBEDDING_MODEL, content=chunks)['embedding']
-            collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
-            print(f"✅ RAG DB에 {len(chunks)}개의 정보 저장 완료.")
-    else:
-        print("✅ RAG DB가 이미 존재합니다.")
+    try:
+        client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        if COLLECTION_NAME not in [c.name for c in client.list_collections()]:
+            print(f"'{COLLECTION_NAME}' 컬렉션이 없어 새로 생성합니다...")
+            collection = client.create_collection(name=COLLECTION_NAME)
+            # GitHub에 업로드된 knowledge_base.txt 파일을 읽어야 합니다.
+            if os.path.exists(KNOWLEDGE_BASE_FILE):
+                with open(KNOWLEDGE_BASE_FILE, "r", encoding="utf-8") as f:
+                    chunks = [c.strip() for c in f.read().split("---") if c.strip()]
+                if chunks:
+                    embeddings = genai.embed_content(model=EMBEDDING_MODEL, content=chunks)['embedding']
+                    collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
+                    print(f"✅ RAG DB에 {len(chunks)}개의 정보 저장 완료.")
+            else:
+                print(f"⚠️ 경고: '{KNOWLEDGE_BASE_FILE}' 파일이 없어 RAG DB를 채우지 못했습니다.")
+        else:
+            print("✅ RAG DB가 이미 존재합니다.")
+    except Exception as e:
+        print(f"🔥 RAG DB 설정 중 오류 발생: {e}")
+        raise e
     print("--- [시스템 초기화 성공] ---")
 
 ai_service = None
