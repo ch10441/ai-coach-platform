@@ -18,7 +18,7 @@ def build_chroma_db(knowledge_base_path="knowledge_base.txt", collection_name="i
     """
     print("ChromaDB 클라이언트를 초기화합니다...")
     # ChromaDB 클라이언트를 초기화합니다. 데이터는 'chroma_db' 폴더에 저장됩니다.
-    client = chromadb.PersistentClient(path="./chroma_db")
+    client = chromadb.PersistentClient(path="/data/chroma_db")
 
     # 기존에 같은 이름의 컬렉션이 있다면 삭제하고 새로 만듭니다.
     if collection_name in [c.name for c in client.list_collections()]:

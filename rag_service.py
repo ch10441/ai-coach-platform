@@ -7,7 +7,7 @@ class RAGService:
     def __init__(self, collection_name="insurance_coach"):
         """서비스 초기화 시, ChromaDB에 연결하고 컬렉션을 가져옵니다."""
         print("RAG 서비스가 ChromaDB에 연결을 시도합니다...")
-        client = chromadb.PersistentClient(path="./chroma_db")
+        client = chromadb.PersistentClient(path="/data/chroma_db")
         try:
             self.collection = client.get_collection(name=collection_name)
             print(f"✅ ChromaDB의 '{collection_name}' 컬렉션에 성공적으로 연결되었습니다.")
