@@ -1,22 +1,24 @@
-# 파일명: app.py (최종 완성본)
+# 파일명: app.py (모든 것을 포함한 최종 완성본)
 
 import os
-import json
 import re
+import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from models import db, bcrypt, User
-from services import AICoachingService
-import chromadb
 import google.generativeai as genai
+import chromadb
 from dotenv import load_dotenv
 
-# --- 1. Flask 앱 생성 및 기본 설정 ---
+# 저희가 만든 다른 파일들을 불러옵니다.
+from models import db, bcrypt, User
+from services import AICoachingService
+
+# --- 1. Flask 앱 및 환경 설정 ---
 app = Flask(__name__)
 CORS(app)
-load_dotenv() # .env 파일에서 환경변수 로드
+load_dotenv()
 
-# --- 2. 경로 및 데이터베이스 URI 설정 ---
+# --- 2. 경로 설정 ---
 DATA_DIR = "/data"
 SQLALCHEMY_DB_PATH = os.path.join(DATA_DIR, 'users.db')
 CHROMA_DB_PATH = os.path.join(DATA_DIR, 'chroma_db')
@@ -24,75 +26,49 @@ KNOWLEDGE_BASE_FILE = "knowledge_base.txt"
 EMBEDDING_MODEL = 'models/text-embedding-004'
 COLLECTION_NAME = "insurance_coach"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{SQLALCHEMY_DB_PATH}'
+# --- 3. 데이터베이스 URI 설정 ---
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL') or f'sqlite:///{SQLALCHEMY_DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# --- 3. Flask 확장 기능 초기화 ---
+# --- 4. Flask 확장 기능 초기화 ---
 db.init_app(app)
 bcrypt.init_app(app)
 
-# --- 4. 앱 시작 시 실행될 단일 초기화 함수 정의 ---
+# --- 5. 앱 시작 시 실행될 단일 초기화 함수 정의 ---
 def initialize_app():
-    """
-    Flask 앱 컨텍스트 내에서 모든 데이터베이스와 서비스를 준비합니다.
-    이 함수는 서버가 시작될 때 딱 한 번만 실행됩니다.
-    """
+    """서버가 시작될 때 데이터베이스와 RAG를 준비하는 함수"""
     print("--- [시스템 초기화 시작] ---")
     
-    # 4-1. 영구 저장소 디렉토리 확인 및 생성
-    if not os.path.exists(DATA_DIR):
-        print(f"영구 저장 경로 '{DATA_DIR}'가 없어 새로 생성합니다.")
-        os.makedirs(DATA_DIR)
-
-    # 4-2. Google API 키 설정
+    # 5-1. Google API 키 설정
     print("1. Google API 키를 설정합니다...")
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("초기화 실패: GOOGLE_API_KEY 환경 변수를 찾을 수 없습니다.")
+    if not api_key: raise ValueError("초기화 실패: GOOGLE_API_KEY 환경 변수를 찾을 수 없습니다.")
     genai.configure(api_key=api_key)
     print("✅ Google API 키 설정 완료.")
 
-    # 4-3. 사용자 정보 DB 테이블 생성 확인
+    # 5-2. 사용자 DB 테이블 생성
     print("2. 사용자 DB 테이블을 확인 및 생성합니다...")
     db.create_all()
     print("✅ 사용자 DB 테이블 준비 완료.")
 
-    # 4-4. RAG 벡터 DB 생성 확인
+    # 5-3. RAG 벡터 DB 생성
     print("3. RAG 벡터 DB를 확인 및 생성합니다...")
     try:
         client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
         if COLLECTION_NAME not in [c.name for c in client.list_collections()]:
-            print(f"'{COLLECTION_NAME}' 컬렉션이 없어 새로 생성합니다...")
             collection = client.create_collection(name=COLLECTION_NAME)
             with open(KNOWLEDGE_BASE_FILE, "r", encoding="utf-8") as f:
-                chunks = [chunk.strip() for chunk in f.read().split("---") if chunk.strip()]
+                chunks = [c.strip() for c in f.read().split("---") if c.strip()]
             if chunks:
                 embeddings = genai.embed_content(model=EMBEDDING_MODEL, content=chunks)['embedding']
                 collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
                 print(f"✅ RAG DB에 {len(chunks)}개의 정보 저장 완료.")
-            else:
-                print("지식 베이스 파일이 비어있습니다.")
         else:
             print("✅ RAG DB가 이미 존재합니다.")
     except Exception as e:
         print(f"🔥 RAG DB 설정 중 심각한 오류 발생: {e}")
         raise e
-
     print("--- [시스템 초기화 성공] ---")
-
-# --- 5. AI 서비스 인스턴스 생성 및 초기화 실행 ---
-ai_service = None
-try:
-    # Flask 앱 컨텍스트 내에서 초기화 함수를 호출합니다.
-    # 이렇게 하면 Gunicorn으로 실행하든, python app.py로 실행하든 항상 작동합니다.
-    with app.app_context():
-        initialize_app()
-    
-    # 모든 초기화가 성공한 후에 AI 서비스를 생성합니다.
-    ai_service = AICoachingService()
-    print("✅ AI 코칭 서비스가 성공적으로 활성화되었습니다.")
-except Exception as e:
-    print(f"🔥 시스템 전체 초기화 과정에서 오류가 발생했습니다: {e}")
 
 # --- 6. API 엔드포인트들 ---
 @app.route('/register', methods=['POST'])
