@@ -1,4 +1,5 @@
-# 파일명: services.py (Pinecone RAG 적용 최종 버전)
+# 파일명: services.py (self 오류 해결된 최종 버전)
+
 import os
 import json
 import pinecone
@@ -6,6 +7,22 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from pypdf import PdfReader
 from docx import Document
+
+# [수정됨] _chunk_text 함수를 클래스 바깥의 독립적인 '도우미 함수'로 만듭니다.
+# 이제 이 함수는 'self'를 필요로 하지 않습니다.
+def _chunk_text(text, chunk_size=2000, chunk_overlap=200):
+    """긴 텍스트를 정해진 크기로, 약간씩 겹치게 하여 자르는 함수"""
+    if not isinstance(text, str):
+        return []
+    
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start += chunk_size - chunk_overlap
+    return chunks
+
 
 class AICoachingService:
     def __init__(self):
@@ -19,10 +36,10 @@ class AICoachingService:
             
         genai.configure(api_key=self.google_api_key)
         
-        print("Pinecone 서비스를 초기화하고 인덱스를 준비합니다...")
         self.pinecone = pinecone.Pinecone(api_key=self.pinecone_api_key)
         self.index_name = "insurance-coach"
         self.embedding_model = 'models/text-embedding-004'
+        
         self._initialize_pinecone_index()
 
         self.model = genai.GenerativeModel('gemini-1.5-pro-latest', generation_config={"response_mime_type": "application/json"})
@@ -36,47 +53,54 @@ class AICoachingService:
         self.index = self.pinecone.Index(self.index_name)
         stats = self.index.describe_index_stats()
         
-        # 인덱스가 비어있을 경우에만 파일 읽기 및 저장을 수행합니다.
         if stats['total_vector_count'] == 0:
-            print(f"Pinecone 인덱스 '{self.index_name}'이 비어있어, 지식 베이스로 채웁니다...")
+            print(f"Pinecone 인덱스가 비어있어, 지식 베이스로 채웁니다...")
             KNOWLEDGE_DIR = "knowledge_files"
-            all_chunks = []
+            all_chunks_with_source = []
             if os.path.exists(KNOWLEDGE_DIR):
+                print(f"'{KNOWLEDGE_DIR}' 폴더에서 문서를 읽습니다...")
                 for filename in os.listdir(KNOWLEDGE_DIR):
                     filepath = os.path.join(KNOWLEDGE_DIR, filename)
-                    text = ""
+                    full_text = ""
                     if filename.endswith(".pdf"):
                         try:
                             reader = PdfReader(filepath)
-                            text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+                            full_text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
                         except Exception as e: print(f"🔥 PDF 파일 '{filename}' 처리 중 오류: {e}")
                     elif filename.endswith(".docx"):
                         try:
                             doc = Document(filepath)
-                            text = "\n".join([para.text for para in doc.paragraphs])
+                            full_text = "\n".join([para.text for para in doc.paragraphs])
                         except Exception as e: print(f"🔥 DOCX 파일 '{filename}' 처리 중 오류: {e}")
                     
-                    if text.strip():
-                        all_chunks.append(text)
-                        print(f"  - '{filename}' 파일 로드 완료.")
+                    if full_text.strip():
+                        # [수정됨] 이제 self 없이 독립적인 함수를 호출합니다.
+                        chunks_from_file = _chunk_text(full_text)
+                        for chunk in chunks_from_file:
+                            all_chunks_with_source.append({"text": chunk, "source": filename})
+                        print(f"  - '{filename}' 파일에서 {len(chunks_from_file)}개의 정보 조각 생성 완료.")
             
-            if all_chunks:
-                print(f"총 {len(all_chunks)}개의 문서를 벡터로 변환하여 저장합니다...")
-                embeddings = genai.embed_content(model=self.embedding_model, content=all_chunks)['embedding']
+            if all_chunks_with_source:
+                print(f"총 {len(all_chunks_with_source)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
+                
+                just_texts = [item['text'] for item in all_chunks_with_source]
+                embeddings = genai.embed_content(model=self.embedding_model, content=just_texts)['embedding']
+                
                 vectors_to_upsert = []
-                for i, (embedding, chunk) in enumerate(zip(embeddings, all_chunks)):
-                    vectors_to_upsert.append(pinecone.Vector(id=f"doc_{i}", values=embedding, metadata={"text": chunk}))
+                for i, (embedding, item) in enumerate(zip(embeddings, all_chunks_with_source)):
+                    metadata = {"text": item['text'], "source_file": item['source']}
+                    vectors_to_upsert.append(pinecone.Vector(id=f"doc_chunk_{i}", values=embedding, metadata=metadata))
                 
                 batch_size = 100
                 for i in range(0, len(vectors_to_upsert), batch_size):
                     batch = vectors_to_upsert[i:i + batch_size]
                     self.index.upsert(vectors=batch)
-                print(f"✅ Pinecone 인덱스에 {len(all_chunks)}개의 문서 정보 저장 완료.")
+                print(f"✅ Pinecone 인덱스에 {len(vectors_to_upsert)}개의 정보 조각 저장 완료.")
             else:
                 print("⚠️ 경고: 'knowledge_files' 폴더에 분석할 문서가 없습니다.")
         else:
             print(f"✅ RAG DB '{self.index_name}'에 이미 {stats['total_vector_count']}개의 데이터가 존재합니다.")
-
+    
     def retrieve_relevant_knowledge(self, query, top_k=3):
         if not query.strip(): return []
         query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding'][0]
