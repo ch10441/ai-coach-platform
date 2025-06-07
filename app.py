@@ -20,7 +20,7 @@ DATA_DIR = "/data"
 SQLALCHEMY_DB_PATH = os.path.join(DATA_DIR, 'users.db')
 CHROMA_DB_PATH = os.path.join(DATA_DIR, 'chroma_db')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{SQLALCHEMY_DB_PATH}'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Flask 확장 기능 초기화
