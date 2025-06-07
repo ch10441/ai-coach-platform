@@ -1,51 +1,85 @@
-# 파일명: app.py (최종 완성본 - 서버 실행 코드 포함)
+# 파일명: app.py (모든 초기화 로직이 통합된 최종 완성본)
 
+import os
+import json
 import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from services import AICoachingService
 from models import db, bcrypt, User
-import os
+from services import AICoachingService
+import chromadb
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-# [추가됨] 데이터베이스 초기 설정을 위한 저희의 새로운 함수를 불러옵니다.
-from db_setup import setup_database
-
+# Flask 앱 초기화
 app = Flask(__name__)
 CORS(app)
 
-# 데이터베이스 설정
-db_path = os.path.join('/data', 'users.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+# 데이터베이스 경로를 Render의 영구 디스크로 설정
+DATA_DIR = "/data"
+SQLALCHEMY_DB_PATH = os.path.join(DATA_DIR, 'users.db')
+CHROMA_DB_PATH = os.path.join(DATA_DIR, 'chroma_db')
+
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{SQLALCHEMY_DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 데이터베이스와 Bcrypt를 Flask 앱과 연결
+# Flask 확장 기능 초기화
 db.init_app(app)
 bcrypt.init_app(app)
 
-# [수정됨] 앱 컨텍스트 내에서 모든 DB 설정을 한 번에 처리합니다.
-with app.app_context():
-    # 1. 사용자 정보 DB 테이블 생성 또는 확인
-    db.create_all()
-    print("✅ 사용자 DB 테이블이 준비되었습니다.")
+# AI 코칭 서비스 인스턴스 생성 (아직 초기화는 아님)
+ai_service = None
 
-    # ▼▼▼ [2번 추가] 앱이 시작될 때 스스로 RAG DB가 있는지 확인하고, 없으면 생성합니다. ▼▼▼
+def initialize_systems():
+    """
+    앱 실행 시 필요한 모든 데이터베이스와 서비스를 초기화하는 함수.
+    """
+    global ai_service
+    print("시스템 초기화를 시작합니다...")
+
+    # 1. 사용자 정보 DB 테이블 생성 또는 확인
+    print("사용자 DB 테이블 생성을 확인합니다...")
+    db.create_all()
+    print("✅ 사용자 DB 테이블 준비 완료.")
+
+    # 2. RAG 벡터 DB 생성 또는 확인 (없을 경우에만)
+    print("RAG 벡터 DB 생성을 확인합니다...")
     try:
-        # 이 함수를 실행하려면 GOOGLE_API_KEY가 필요하므로,
-        # AICoachingService 초기화 이후로 옮기는 것이 더 안정적일 수 있습니다.
-        # 하지만 지금 구조에서는 여기서 먼저 실행해보겠습니다.
-        # 만약 여기서 API 키 관련 오류가 발생하면 AICoachingService 초기화 이후로 옮기면 됩니다.
-        setup_database()
+        # .env 파일 로드 (API 키 필요)
+        load_dotenv()
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("RAG DB 설정 실패: GOOGLE_API_KEY가 없습니다.")
+        genai.configure(api_key=api_key)
+
+        client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        collection_name = "insurance_coach"
+
+        if collection_name not in [c.name for c in client.list_collections()]:
+            print(f"'{collection_name}' 컬렉션이 없습니다. 새로 생성합니다...")
+            collection = client.create_collection(name=collection_name)
+
+            with open("knowledge_base.txt", "r", encoding="utf-8") as f:
+                content = f.read()
+            chunks = [chunk.strip() for chunk in content.split("---") if chunk.strip()]
+
+            if chunks:
+                print(f"{len(chunks)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
+                embedding_model = 'models/text-embedding-004'
+                embeddings = genai.embed_content(model=embedding_model, content=chunks)['embedding']
+                collection.add(embeddings=embeddings, documents=chunks, ids=[f"chunk_{i}" for i in range(len(chunks))])
+                print("✅ RAG 데이터베이스가 성공적으로 생성되었습니다.")
+            else:
+                print("지식 베이스 파일이 비어있어 RAG DB를 생성하지 않습니다.")
+        else:
+            print("✅ RAG 데이터베이스가 이미 존재합니다.")
+
     except Exception as e:
         print(f"🔥 RAG 데이터베이스 설정 중 오류 발생: {e}")
-        print("   (하지만 서버는 계속 실행됩니다.)")
 
-# AI 코칭 서비스 초기화
-try:
+    # 3. AI 코칭 서비스 최종 초기화
     ai_service = AICoachingService()
     print("✅ AI 코칭 서비스가 성공적으로 초기화되었습니다.")
-except Exception as e:
-    print(f"🔥 AI 서비스 초기화 실패: {e}")
-    ai_service = None
 
 # --- API 엔드포인트들 ---
 
@@ -149,9 +183,9 @@ def analyze():
         print(f"🔥 /analyze API 처리 중 심각한 오류 발생: {e}")
         return jsonify({"success": False, "error": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요."}), 500
 
-# ▼▼▼▼▼ 바로 이 부분이 '영업 시작' 버튼입니다! ▼▼▼▼▼
+
+# Flask 서버 실행
 if __name__ == '__main__':
-    # 이 코드는 'python app.py'로 직접 실행했을 때만 작동합니다.
-    # Flask 개발 서버를 시작하라는 명령어입니다.
-    app.run(host='0.0.0.0', port=5001, debug=True)
-# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+    with app.app_context():
+        initialize_database() # 앱 실행 전에 데이터베이스 초기화 함수 호출
+    app.run(host='0.0.0.0', port=5001, debug=False) # 운영 환경에서는 Debug 모드를 끕니다.
