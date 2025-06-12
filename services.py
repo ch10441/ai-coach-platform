@@ -176,13 +176,39 @@ class AICoachingService:
         """
 
     def analyze_consultation(self, consultation_text, history):
-        relevant_knowledge = self.retrieve_relevant_knowledge(consultation_text)
-        prompt = self._build_prompt(consultation_text, history, relevant_knowledge)
+        """[수정됨] 긴 텍스트는 요약 후 분석하고, AI의 차단 응답 등 예외 처리를 강화합니다."""
+        if not consultation_text.strip(): 
+            return None, history, "분석할 내용이 없습니다."
+
         try:
+            # 텍스트가 너무 길면 요약 단계를 먼저 거칩니다.
+            processed_text = self._summarize_if_needed(consultation_text)
+            
+            relevant_knowledge = self.retrieve_relevant_knowledge(processed_text)
+            prompt = self._build_prompt(processed_text, history, relevant_knowledge)
+            
             response = self.model.generate_content(prompt)
+            
+            # [추가됨] AI 응답에 문제가 있는지 먼저 확인합니다.
+            if not response.parts:
+                if response.prompt_feedback.block_reason:
+                    error_msg = f"AI 답변이 안전 문제로 차단되었습니다. 이유: {response.prompt_feedback.block_reason.name}"
+                    print(f"🔥 {error_msg}")
+                    return None, history, error_msg
+                else:
+                    error_msg = "AI로부터 비어있는 응답을 받았습니다."
+                    print(f"🔥 {error_msg}")
+                    return None, history, error_msg
+            
             coaching_result = json.loads(response.text)
-            new_history = history + [f"---고객/설계사 대화---\n{consultation_text}", f"---AI 코칭 요약---\n고객 의도: {coaching_result.get('customer_intent')}"]
-            return coaching_result, new_history
+            new_history = history + [f"---고객/설계사 대화---\n{consultation_text}", f"---AI 코칭 요약---\n{coaching_result.get('customer_intent')}"]
+            return coaching_result, new_history, None # 성공 시에는 에러 메시지 없음 (None)
+
+        except json.JSONDecodeError as e:
+            error_msg = f"AI가 유효하지 않은 JSON 형식을 생성했습니다: {e}"
+            print(f"🔥 {error_msg}\nAI의 원본 응답: {response.text[:500]}...")
+            return None, history, error_msg
         except Exception as e:
-            print(f"🔥 AI 분석 중 오류 발생 (services.py): {e}")
-            return None, history
+            error_msg = f"AI 분석 중 알 수 없는 오류 발생: {e}"
+            print(f"🔥 {error_msg}")
+            return None, history, error_msg

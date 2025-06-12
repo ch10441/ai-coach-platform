@@ -246,20 +246,27 @@ def display_ai_coach_ui():
         if consultation_text:
             st.session_state['last_consultation_text'] = consultation_text
             with st.spinner(f'{source}의 내용을 AI가 분석 중입니다...'):
-                payload = {"consultation_text": consultation_text, "history": st.session_state.get('history', [])}
-                response = requests.post(f"{BACKEND_API_URL}/analyze", json=payload)
-                if response.status_code == 200 and response.json().get("success"):
+                try:
+                    payload = {"consultation_text": consultation_text, "history": st.session_state.get('history', [])}
+                    response = requests.post(f"{BACKEND_API_URL}/analyze", json=payload, timeout=60)
                     response_data = response.json()
-                    st.session_state.last_analysis = response_data.get("analysis")
-                    st.session_state.history = response_data.get("history")
-                    st.success("✅ AI 코칭 분석이 완료되었습니다!")
-                else:
-                    st.error(f"분석 실패: {response.json().get('error', '알 수 없는 오류')}")
-                    pass
+
+                    if response.status_code == 200 and response_data.get("success"):
+                        st.session_state.last_analysis = response_data.get("analysis")
+                        st.session_state.history = response_data.get("history")
+                        st.success("✅ AI 코칭 분석이 완료되었습니다!")
+                    else:
+                        # [수정됨] 백엔드에서 전달된 상세 오류 메시지를 표시합니다.
+                        error_detail = response_data.get('error', '알 수 없는 오류')
+                        st.error(f"분석 실패: {error_detail}")
+                
+                except requests.exceptions.RequestException as e:
+                    st.error(f"서버에 분석을 요청하는 중 오류가 발생했습니다: {e}")
+                except json.JSONDecodeError:
+                    st.error("분석 실패: 서버로부터 유효하지 않은 응답을 받았습니다. 백엔드 서버의 로그를 확인해주세요.")
         else:
             st.warning("분석할 상담 내용을 텍스트로 입력하거나 PDF 파일을 업로드해주세요.")
-
-    # 분석 결과를 표시하기 위해 display_coaching_result 함수를 호출합니다.
+    
     display_coaching_result(st.session_state.get('last_analysis'))
 
 def main_app():
