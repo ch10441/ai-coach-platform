@@ -56,11 +56,24 @@ def login():
     data = request.get_json()
     if not data or not data.get('username') or not data.get('password'):
         return jsonify({"success": False, "error": "아이디와 비밀번호가 필요합니다."}), 400
-    user = User.query.filter_by(username=data['username']).first()
+    
+    with app.app_context():
+        user = User.query.filter_by(username=data['username']).first()
+    
     if user and user.check_password(data['password']):
         if not user.is_approved:
             return jsonify({"success": False, "error": "계정이 아직 관리자의 승인을 기다리고 있습니다."}), 403
-        return jsonify({"success": True, "message": "로그인 성공!", "user": {"username": user.username, "role": user.role}})
+        
+        # [수정됨] 로그인 성공 시, user_id도 함께 전달합니다.
+        return jsonify({
+            "success": True, 
+            "message": "로그인 성공!",
+            "user": {
+                "id": user.id, # <-- 이 줄이 추가되었습니다!
+                "username": user.username,
+                "role": user.role
+            }
+        })
     else:
         return jsonify({"success": False, "error": "아이디 또는 비밀번호가 일치하지 않습니다."}), 401
 
