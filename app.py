@@ -127,22 +127,32 @@ def delete_user(user_id):
     
 @app.route('/feedback', methods=['POST'])
 def handle_feedback():
-    """프론트엔드에서 받은 피드백을 데이터베이스에 저장합니다."""
+    """프론트엔드에서 받은 피드백을 중복 확인 후 데이터베이스에 저장합니다."""
     data = request.get_json()
-    required_fields = ['user_id', 'consultation_summary', 'ai_suggestion', 'rating']
+    required_fields = ['user_id', 'ai_suggestion', 'rating']
     if not all(field in data for field in required_fields):
         return jsonify({"success": False, "error": "피드백 데이터가 부족합니다."}), 400
 
     try:
-        # [수정됨] 데이터베이스 작업을 앱 컨텍스트(app_context) 내에서 실행하도록 변경
         with app.app_context():
             user = db.session.get(User, data['user_id'])
             if not user:
                 return jsonify({"success": False, "error": "사용자를 찾을 수 없습니다."}), 404
             
+            # [추가됨] 이미 해당 제안에 대해 피드백을 남겼는지 확인합니다.
+            existing_feedback = Feedback.query.filter_by(
+                user_id=user.id,
+                ai_suggestion=data['ai_suggestion']
+            ).first()
+            
+            if existing_feedback:
+                # 이미 피드백이 존재하면, 저장을 막고 에러 메시지를 보냅니다.
+                return jsonify({"success": False, "error": "이미 이 제안에 대한 피드백을 남기셨습니다."}), 409 # 409: Conflict
+
+            # 중복이 아닐 경우에만 새로운 피드백을 저장합니다.
             new_feedback = Feedback(
                 user_id=user.id,
-                consultation_summary=data['consultation_summary'],
+                consultation_summary=data.get('consultation_summary', ''),
                 ai_suggestion=data['ai_suggestion'],
                 rating=data['rating']
             )
