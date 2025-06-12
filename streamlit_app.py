@@ -258,16 +258,28 @@ def display_ai_coach_ui():
     display_coaching_result(st.session_state.get('last_analysis'))
 
 def main_app():
-    """로그인 성공 후 표시될 화면을 역할에 따라 분기"""
-    user_role = st.session_state.get("role", "user")
-    if user_role == 'admin':
-        main_tab, admin_tab = st.tabs(["🚀 AI 코칭 보조창", "👑 관리자 페이지"])
-        with main_tab:
-            display_ai_coach_ui()
-        with admin_tab:
-            admin_dashboard()
-    else:
-        display_ai_coach_ui()
+    """로그인 성공 후 표시될 메인 AI 코칭 플랫폼 화면"""
+    
+    with st.sidebar:
+        st.header("📋 AI 상담 코치")
+        st.write(f"**{st.session_state.get('username', '설계사')}**님, 환영합니다!")
+        
+        # ▼▼▼▼▼ 바로 이 버튼의 로직이 최종적으로 수정되었습니다! ▼▼▼▼▼
+        if st.button("✨ 새로운 상담 시작하기"):
+            # 초기화할 세션 상태 키 목록
+            keys_to_clear = ['last_analysis', 'last_consultation_text', 'text_input']
+            
+            # history는 반드시 빈 리스트[]로, feedback_status는 빈 딕셔너리{}로 초기화합니다.
+            st.session_state.history = []
+            st.session_state.feedback_status = {}
+            
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    # text_input은 빈 문자열로, 나머지는 None으로 설정
+                    st.session_state[key] = "" if key == 'text_input' else None
+            
+            st.success("새로운 상담 세션을 시작합니다!")
+            st.rerun() # 페이지를 새로고침하여 모든 변경사항을 즉시 반영
 
 # --------------------------------------------------------------------------
 # 4. 앱의 메인 실행 로직
@@ -277,6 +289,8 @@ def main_app():
 if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if 'history' not in st.session_state: st.session_state.history = []
 if 'last_analysis' not in st.session_state: st.session_state.last_analysis = None
+if 'feedback_status' not in st.session_state: st.session_state.feedback_status = {} # 피드백 상태 추가
+if 'last_consultation_text' not in st.session_state: st.session_state.last_consultation_text = ""
 
 # 로그인 상태에 따라 다른 페이지(함수)를 보여줌
 if st.session_state.logged_in:
