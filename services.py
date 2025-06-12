@@ -11,10 +11,7 @@ from docx import Document
 # [수정됨] _chunk_text 함수를 클래스 바깥의 독립적인 '도우미 함수'로 만듭니다.
 # 이제 이 함수는 'self'를 필요로 하지 않습니다.
 def _chunk_text(text, chunk_size=2000, chunk_overlap=200):
-    """긴 텍스트를 정해진 크기로, 약간씩 겹치게 하여 자르는 함수"""
-    if not isinstance(text, str):
-        return []
-    
+    if not isinstance(text, str): return []
     chunks = []
     start = 0
     while start < len(text):
@@ -23,42 +20,32 @@ def _chunk_text(text, chunk_size=2000, chunk_overlap=200):
         start += chunk_size - chunk_overlap
     return chunks
 
-
 class AICoachingService:
     def __init__(self):
         load_dotenv()
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
         self.pinecone_env = os.getenv("PINECONE_ENVIRONMENT")
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
-
         if not all([self.pinecone_api_key, self.pinecone_env, self.google_api_key]):
-            raise ValueError("초기화 실패: Pinecone 또는 Google API 키/환경 변수가 설정되지 않았습니다.")
-            
+            raise ValueError("API 키 또는 환경 변수가 설정되지 않았습니다.")
         genai.configure(api_key=self.google_api_key)
-        
         self.pinecone = pinecone.Pinecone(api_key=self.pinecone_api_key)
         self.index_name = "insurance-coach"
         self.embedding_model = 'models/text-embedding-004'
-        
         self._initialize_pinecone_index()
-
         self.model = genai.GenerativeModel('gemini-1.5-pro-latest', generation_config={"response_mime_type": "application/json"})
         print("✅ AI 코칭 서비스가 (Pinecone과 함께) 성공적으로 초기화되었습니다.")
 
     def _initialize_pinecone_index(self):
-        """Pinecone 인덱스를 확인하고, 비어있으면 knowledge_files 폴더의 문서들로 채웁니다."""
         if self.index_name not in self.pinecone.list_indexes().names():
              raise ValueError(f"Pinecone에 '{self.index_name}' 인덱스가 없습니다. Pinecone 대시보드에서 먼저 생성해주세요.")
-        
         self.index = self.pinecone.Index(self.index_name)
         stats = self.index.describe_index_stats()
-        
         if stats['total_vector_count'] == 0:
             print(f"Pinecone 인덱스가 비어있어, 지식 베이스로 채웁니다...")
             KNOWLEDGE_DIR = "knowledge_files"
             all_chunks_with_source = []
             if os.path.exists(KNOWLEDGE_DIR):
-                print(f"'{KNOWLEDGE_DIR}' 폴더에서 문서를 읽습니다...")
                 for filename in os.listdir(KNOWLEDGE_DIR):
                     filepath = os.path.join(KNOWLEDGE_DIR, filename)
                     full_text = ""
@@ -72,40 +59,39 @@ class AICoachingService:
                             doc = Document(filepath)
                             full_text = "\n".join([para.text for para in doc.paragraphs])
                         except Exception as e: print(f"🔥 DOCX 파일 '{filename}' 처리 중 오류: {e}")
-                    
                     if full_text.strip():
-                        # [수정됨] 이제 self 없이 독립적인 함수를 호출합니다.
                         chunks_from_file = _chunk_text(full_text)
                         for chunk in chunks_from_file:
                             all_chunks_with_source.append({"text": chunk, "source": filename})
                         print(f"  - '{filename}' 파일에서 {len(chunks_from_file)}개의 정보 조각 생성 완료.")
-            
             if all_chunks_with_source:
                 print(f"총 {len(all_chunks_with_source)}개의 정보 조각을 벡터로 변환하여 저장합니다...")
-                
                 just_texts = [item['text'] for item in all_chunks_with_source]
                 embeddings = genai.embed_content(model=self.embedding_model, content=just_texts)['embedding']
-                
                 vectors_to_upsert = []
                 for i, (embedding, item) in enumerate(zip(embeddings, all_chunks_with_source)):
                     metadata = {"text": item['text'], "source_file": item['source']}
                     vectors_to_upsert.append(pinecone.Vector(id=f"doc_chunk_{i}", values=embedding, metadata=metadata))
-                
                 batch_size = 100
                 for i in range(0, len(vectors_to_upsert), batch_size):
-                    batch = vectors_to_upsert[i:i + batch_size]
-                    self.index.upsert(vectors=batch)
+                    self.index.upsert(vectors=vectors_to_upsert[i:i + batch_size])
                 print(f"✅ Pinecone 인덱스에 {len(vectors_to_upsert)}개의 정보 조각 저장 완료.")
-            else:
-                print("⚠️ 경고: 'knowledge_files' 폴더에 분석할 문서가 없습니다.")
         else:
             print(f"✅ RAG DB '{self.index_name}'에 이미 {stats['total_vector_count']}개의 데이터가 존재합니다.")
-    
-    def retrieve_relevant_knowledge(self, query, top_k=3):
-        if not query.strip(): return []
-        query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding'][0]
-        results = self.index.query(vector=query_embedding, top_k=top_k, include_metadata=True)
-        return [match['metadata']['text'] for match in results['matches']]
+
+    def _summarize_if_needed(self, text, max_length=8000):
+        if len(text) <= max_length: return text
+        print(f"⚠️ 텍스트가 너무 길어({len(text)}자) 요약을 먼저 실행합니다...")
+        summarizer_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        prompt = f"다음은 매우 긴 보험 상담 내용입니다. 이 내용의 핵심적인 맥락, 고객의 주요 질문, 그리고 중요한 감정 변화를 놓치지 않으면서, 전체 내용을 5~7개의 핵심 문단으로 요약해주세요. 이 요약본은 다른 AI가 후속 분석을 하는 데 사용될 것입니다.\n---\n원본 텍스트:\n{text}\n---\n핵심 요약본:"
+        try:
+            response = summarizer_model.generate_content(prompt)
+            summary = response.text
+            print(f"✅ 요약 완료 (원래 길이: {len(text)}, 요약 길이: {len(summary)})")
+            return summary
+        except Exception as e:
+            print(f"🔥 텍스트 요약 중 오류 발생: {e}")
+            return text
 
     def _build_prompt(self, consultation_text, history, relevant_knowledge):
         # 프롬프트 내용은 이전 최종본과 동일합니다.
@@ -176,39 +162,21 @@ class AICoachingService:
         """
 
     def analyze_consultation(self, consultation_text, history):
-        """[수정됨] 긴 텍스트는 요약 후 분석하고, AI의 차단 응답 등 예외 처리를 강화합니다."""
-        if not consultation_text.strip(): 
-            return None, history, "분석할 내용이 없습니다."
-
+        error_message = None
         try:
-            # 텍스트가 너무 길면 요약 단계를 먼저 거칩니다.
             processed_text = self._summarize_if_needed(consultation_text)
-            
             relevant_knowledge = self.retrieve_relevant_knowledge(processed_text)
             prompt = self._build_prompt(processed_text, history, relevant_knowledge)
-            
             response = self.model.generate_content(prompt)
-            
-            # [추가됨] AI 응답에 문제가 있는지 먼저 확인합니다.
             if not response.parts:
                 if response.prompt_feedback.block_reason:
-                    error_msg = f"AI 답변이 안전 문제로 차단되었습니다. 이유: {response.prompt_feedback.block_reason.name}"
-                    print(f"🔥 {error_msg}")
-                    return None, history, error_msg
-                else:
-                    error_msg = "AI로부터 비어있는 응답을 받았습니다."
-                    print(f"🔥 {error_msg}")
-                    return None, history, error_msg
-            
+                    error_message = f"AI 답변이 안전 문제로 차단되었습니다: {response.prompt_feedback.block_reason.name}"
+                else: error_message = "AI로부터 비어있는 응답을 받았습니다."
+                raise ValueError(error_message)
             coaching_result = json.loads(response.text)
             new_history = history + [f"---고객/설계사 대화---\n{consultation_text}", f"---AI 코칭 요약---\n{coaching_result.get('customer_intent')}"]
-            return coaching_result, new_history, None # 성공 시에는 에러 메시지 없음 (None)
-
-        except json.JSONDecodeError as e:
-            error_msg = f"AI가 유효하지 않은 JSON 형식을 생성했습니다: {e}"
-            print(f"🔥 {error_msg}\nAI의 원본 응답: {response.text[:500]}...")
-            return None, history, error_msg
+            return coaching_result, new_history, None
         except Exception as e:
-            error_msg = f"AI 분석 중 알 수 없는 오류 발생: {e}"
-            print(f"🔥 {error_msg}")
-            return None, history, error_msg
+            final_error_message = error_message or f"AI 분석 중 알 수 없는 오류 발생: {e}"
+            print(f"🔥 {final_error_message}")
+            return None, history, final_error_message

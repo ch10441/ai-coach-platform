@@ -172,18 +172,20 @@ def analyze():
         return jsonify({"success": False, "error": "AI 서비스가 초기화되지 않았습니다."}), 500
     try:
         data = request.get_json()
-        if not data or 'consultation_text' not in data:
-            return jsonify({"success": False, "error": "분석할 상담 내용(consultation_text)이 없습니다."}), 400
-        consultation_text = data['consultation_text']
+        consultation_text = data.get('consultation_text')
+        if not consultation_text:
+            return jsonify({"success": False, "error": "분석할 상담 내용이 없습니다."}), 400
+        
         history = data.get('history', [])
-        coaching_result, new_history = ai_service.analyze_consultation(consultation_text, history)
+        coaching_result, new_history, error_msg = ai_service.analyze_consultation(consultation_text, history)
+        
         if coaching_result:
             return jsonify({"success": True, "analysis": coaching_result, "history": new_history})
         else:
-            return jsonify({"success": False, "error": "AI가 분석 결과를 생성하는데 실패했습니다."}), 500
+            return jsonify({"success": False, "error": error_msg or "AI 분석에 실패했습니다."}), 500
     except Exception as e:
         print(f"🔥 /analyze API 처리 중 심각한 오류 발생: {e}")
-        return jsonify({"success": False, "error": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요."}), 500
+        return jsonify({"success": False, "error": "서버 내부 오류가 발생했습니다."}), 500
 
 
 # --- 5. Flask 개발 서버 실행 (로컬 테스트용) ---
