@@ -4,7 +4,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-from models import db, bcrypt, User
+from models import db, bcrypt, User, Feedback
 from services import AICoachingService
 
 # 1. Flask 앱 및 DB 설정
@@ -111,6 +111,36 @@ def delete_user(user_id):
     except Exception as e:
         print(f"🔥 /admin/delete API 오류: {e}")
         return jsonify({"success": False, "error": "계정 삭제 중 서버 오류 발생"}), 500
+    
+def handle_feedback():
+    """프론트엔드에서 받은 피드백을 데이터베이스에 저장합니다."""
+    data = request.get_json()
+    required_fields = ['user_id', 'consultation_summary', 'ai_suggestion', 'rating']
+    if not all(field in data for field in required_fields):
+        return jsonify({"success": False, "error": "피드백 데이터가 부족합니다."}), 400
+
+    try:
+        with app.app_context():
+            # User.query.get()은 기본 키(id)로 사용자를 찾는 더 효율적인 방법입니다.
+            user = db.session.get(User, data['user_id'])
+            if not user:
+                return jsonify({"success": False, "error": "사용자를 찾을 수 없습니다."}), 404
+
+            new_feedback = Feedback(
+                user_id=user.id,
+                consultation_summary=data['consultation_summary'],
+                ai_suggestion=data['ai_suggestion'],
+                rating=data['rating']
+            )
+            db.session.add(new_feedback)
+            db.session.commit()
+
+        return jsonify({"success": True, "message": "피드백이 성공적으로 기록되었습니다."}), 201
+
+    except Exception as e:
+        print(f"🔥 /feedback API 오류: {e}")
+        return jsonify({"success": False, "error": "피드백 저장 중 서버 오류 발생"}), 500
+# ▲▲▲▲▲ 여기까지 추가 ▲▲▲▲▲
 
 @app.route('/analyze', methods=['POST'])
 def analyze():

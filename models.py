@@ -27,3 +27,20 @@ class User(db.Model):
 
     def check_password(self, password):
         return bcrypt.check_password_hash(self.password_hash, password)
+    
+class Feedback(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    # 어떤 사용자가 피드백을 남겼는지 기록 (User 테이블과 연결)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    # 어떤 상담 내용에 대한 피드백인지 기록
+    consultation_summary = db.Column(db.Text, nullable=False)
+    # AI가 제안했던 어떤 멘트에 대한 피드백인지 기록
+    ai_suggestion = db.Column(db.Text, nullable=False)
+    # 피드백 내용 (좋아요/별로예요)
+    rating = db.Column(db.String(20), nullable=False) # 'helpful' or 'not_helpful'
+    # 피드백을 남긴 시간
+    timestamp = db.Column(db.DateTime, default=db.func.now())
+
+    # User와의 관계 설정
+    user = db.relationship('User', backref=db.backref('feedbacks', lazy=True))
+# ▲▲▲▲▲ 여기까지 추가 ▲▲▲▲▲
