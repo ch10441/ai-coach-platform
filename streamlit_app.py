@@ -104,31 +104,36 @@ def display_login_page():
                     register_user(payload)
 
 def display_coaching_result(result):
-    """AI 분석 결과를 탭 형태로 출력하고, 피드백 버튼을 추가합니다."""
+    """[수정됨] AI 분석 결과를 더 명확하게 구분하여 보여주는 함수"""
     st.subheader("2. AI 코칭 결과 확인하기")
     if not result:
         st.info("상담 내용을 입력하고 'AI 코칭 시작하기' 버튼을 누르면 여기에 분석 결과가 표시됩니다.")
         return
 
-    # 피드백을 보낼 때, 어떤 상담에 대한 피드백인지 알려주기 위해 원본 상담 내용을 가져옵니다.
+    # 피드백 전송에 필요한 상담 내용 원본을 가져옵니다.
     consultation_context = st.session_state.get('last_consultation_text', '')
 
+    # [수정됨] 탭 구조를 2개로 단순화하여 가독성을 높입니다.
     tab1, tab2 = st.tabs(["💡 종합 분석 및 전략", "💬 AI 추천 멘트 모음"])
 
+    # --- 탭 1: 종합 분석 및 전략 ---
     with tab1:
-        st.markdown(f"##### 💡 고객 핵심 니즈")
+        st.markdown("##### 💡 고객 핵심 니즈")
         st.info(result.get('customer_intent', '분석 정보 없음'))
+        
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown(f"##### 💖 고객 감정 상태")
+            st.markdown("##### 💖 고객 감정 상태")
             st.info(result.get('customer_sentiment', '분석 정보 없음'))
         with col2:
             st.markdown("##### 👤 추정 고객 성향")
             st.info(result.get('customer_profile_guess', '분석 정보 없음'))
+        
         st.markdown("---")
         st.markdown("##### 🧭 다음 추천 진행 방향")
         st.success(result.get('next_step_strategy', '분석 정보 없음'))
 
+    # --- 탭 2: [수정됨] 모든 추천 멘트를 이 곳에 모아서 보여줍니다. ---
     with tab2:
         st.markdown("##### 🛡️ 고객 반론 예측 및 추천 대응 멘트")
         st.caption("AI의 제안이 도움이 되셨다면 👍를, 그렇지 않다면 👎를 눌러주세요!")
@@ -136,20 +141,18 @@ def display_coaching_result(result):
         strategy_data = result.get('objection_handling_strategy', {})
         example_script = strategy_data.get('example_script', '추천 멘트 없음')
         
-        # expander 안에 버튼을 넣기 위해 expander를 먼저 생성합니다.
-        strategy_expander = st.expander("**추천 대응 멘트 보기**", expanded=True)
-        with strategy_expander:
-            st.info(f"**예상 반론:** {strategy_data.get('predicted_objection', '분석된 반론 없음')}")
-            st.success(f"**대응 전략:** {strategy_data.get('counter_strategy', '분석된 전략 없음')}")
+        with st.container(border=True):
+            st.warning(f"**예상 반론:** {strategy_data.get('predicted_objection', '분석된 반론 없음')}")
+            st.info(f"**대응 전략:** {strategy_data.get('counter_strategy', '분석된 전략 없음')}")
             st.write(example_script)
-
+            
             if example_script != '추천 멘트 없음':
-                feedback_cols = st.columns([1, 1, 8])
+                feedback_cols = st.columns(10)
                 if feedback_cols[0].button("👍", key="helpful_strategy"):
                     send_feedback(consultation_context, example_script, "helpful")
                 if feedback_cols[1].button("👎", key="unhelpful_strategy"):
                     send_feedback(consultation_context, example_script, "not_helpful")
-        
+
         st.markdown("---")
         st.markdown("##### 💬 추가 추천 멘트 옵션")
         for i, action in enumerate(result.get('recommended_actions', [])):
@@ -157,7 +160,7 @@ def display_coaching_result(result):
                 script_text = action.get('script', '')
                 st.write(script_text)
                 
-                feedback_cols_actions = st.columns([1, 1, 8])
+                feedback_cols_actions = st.columns(10)
                 if feedback_cols_actions[0].button("👍", key=f"helpful_{i}"):
                     send_feedback(consultation_context, script_text, "helpful")
                 if feedback_cols_actions[1].button("👎", key=f"unhelpful_{i}"):
