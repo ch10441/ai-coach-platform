@@ -15,18 +15,25 @@ BACKEND_API_URL = "https://ai-coach-platform-tz4n.onrender.com"
 # --------------------------------------------------------------------------
 
 def send_feedback(consultation_context, ai_suggestion, rating):
-    """[신규 추가] 피드백을 백엔드 서버로 전송하는 함수"""
+    """피드백을 백엔드 서버로 전송하는 함수"""
     try:
+        # st.session_state에서 user_id를 가져옵니다.
+        user_id = st.session_state.get("user_id")
+        if not user_id:
+            st.toast("오류: 사용자 정보가 없어 피드백을 보낼 수 없습니다.", icon="🔥")
+            return
+
         payload = {
-            "user_id": st.session_state.get("user_id"),
+            "user_id": user_id,
             "consultation_summary": consultation_context[:1000], # 너무 길지 않게 요약본만 저장
             "ai_suggestion": ai_suggestion,
             "rating": rating
         }
         # 백엔드의 /feedback API를 호출합니다.
-        response = requests.post(f"{BACKEND_API_URL}/feedback", json=payload)
+        response = requests.post(f"{BACKEND_API_URL}/feedback", json=payload, timeout=10)
+
         if response.status_code == 201:
-            st.toast(f"👍 소중한 피드백 감사합니다!", icon="✅")
+            st.toast(f"소중한 피드백 감사합니다!", icon="✅")
         else:
             st.toast(f"피드백 저장에 실패했습니다: {response.json().get('error')}", icon="🔥")
     except Exception as e:
@@ -42,7 +49,8 @@ def login_user(username, password):
             user_data = response.json().get("user", {})
             st.session_state["username"] = user_data.get("username")
             st.session_state["role"] = user_data.get("role")
-            st.session_state["user_id"] = user_data.get("id") # user_id 저장
+            # [추가됨] 피드백 저장을 위해 user_id를 세션에 저장합니다.
+            st.session_state["user_id"] = user_data.get("id")
             st.rerun()
         else:
             st.error(f"로그인 실패: {response.json().get('error', '아이디 또는 비밀번호가 일치하지 않습니다.')}")
@@ -96,7 +104,7 @@ def display_login_page():
                     register_user(payload)
 
 def display_coaching_result(result):
-    """[수정됨] AI 분석 결과를 탭 형태로 출력하고, 피드백 버튼을 추가합니다."""
+    """AI 분석 결과를 탭 형태로 출력하고, 피드백 버튼을 추가합니다."""
     st.subheader("2. AI 코칭 결과 확인하기")
     if not result:
         st.info("상담 내용을 입력하고 'AI 코칭 시작하기' 버튼을 누르면 여기에 분석 결과가 표시됩니다.")
@@ -105,48 +113,54 @@ def display_coaching_result(result):
     # 피드백을 보낼 때, 어떤 상담에 대한 피드백인지 알려주기 위해 원본 상담 내용을 가져옵니다.
     consultation_context = st.session_state.get('last_consultation_text', '')
 
-    tab1, tab2, tab3 = st.tabs(["💡 종합 분석", "🛡️ 반론 대응 전략", "💬 추천 멘트"])
+    tab1, tab2 = st.tabs(["💡 종합 분석 및 전략", "💬 AI 추천 멘트 모음"])
 
     with tab1:
-        # ... (종합 분석 탭 내용은 이전과 동일)
-        pass
+        st.markdown(f"##### 💡 고객 핵심 니즈")
+        st.info(result.get('customer_intent', '분석 정보 없음'))
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"##### 💖 고객 감정 상태")
+            st.info(result.get('customer_sentiment', '분석 정보 없음'))
+        with col2:
+            st.markdown("##### 👤 추정 고객 성향")
+            st.info(result.get('customer_profile_guess', '분석 정보 없음'))
+        st.markdown("---")
+        st.markdown("##### 🧭 다음 추천 진행 방향")
+        st.success(result.get('next_step_strategy', '분석 정보 없음'))
 
     with tab2:
-        st.markdown("##### 🛡️ 고객 반론 예측 및 대응 전략")
-        strategy_data = result.get('objection_handling_strategy', {})
-        
-        predicted_objection = strategy_data.get('predicted_objection', '분석된 반론 없음')
-        counter_strategy = strategy_data.get('counter_strategy', '분석된 전략 없음')
-        example_script = strategy_data.get('example_script', '추천 멘트 없음')
-
-        st.markdown("**🎯 AI가 예측한 고객의 다음 반론 또는 망설임 포인트:**")
-        st.warning(predicted_objection)
-        st.markdown("**💡 추천 대응 전략:**")
-        st.success(counter_strategy)
-        st.markdown("**🗣️ 추천 대응 멘트 예시:**")
-        st.info(example_script)
-        
-        # [추가됨] 대응 멘트 예시에 대한 피드백 버튼
-        if example_script != '추천 멘트 없음':
-            feedback_cols = st.columns([1, 1, 8])
-            if feedback_cols[0].button("👍", key="helpful_strategy"):
-                send_feedback(consultation_context, example_script, "helpful")
-            if feedback_cols[1].button("👎", key="unhelpful_strategy"):
-                send_feedback(consultation_context, example_script, "not_helpful")
-
-    with tab3:
-        st.markdown("##### 💬 AI 추천 멘트 옵션")
+        st.markdown("##### 🛡️ 고객 반론 예측 및 추천 대응 멘트")
         st.caption("AI의 제안이 도움이 되셨다면 👍를, 그렇지 않다면 👎를 눌러주세요!")
+        
+        strategy_data = result.get('objection_handling_strategy', {})
+        example_script = strategy_data.get('example_script', '추천 멘트 없음')
+        
+        # expander 안에 버튼을 넣기 위해 expander를 먼저 생성합니다.
+        strategy_expander = st.expander("**추천 대응 멘트 보기**", expanded=True)
+        with strategy_expander:
+            st.info(f"**예상 반론:** {strategy_data.get('predicted_objection', '분석된 반론 없음')}")
+            st.success(f"**대응 전략:** {strategy_data.get('counter_strategy', '분석된 전략 없음')}")
+            st.write(example_script)
+
+            if example_script != '추천 멘트 없음':
+                feedback_cols = st.columns([1, 1, 8])
+                if feedback_cols[0].button("👍", key="helpful_strategy"):
+                    send_feedback(consultation_context, example_script, "helpful")
+                if feedback_cols[1].button("👎", key="unhelpful_strategy"):
+                    send_feedback(consultation_context, example_script, "not_helpful")
+        
+        st.markdown("---")
+        st.markdown("##### 💬 추가 추천 멘트 옵션")
         for i, action in enumerate(result.get('recommended_actions', [])):
             with st.expander(f"**옵션 {i+1}: {action.get('style', '')}**"):
                 script_text = action.get('script', '')
                 st.write(script_text)
                 
-                # [추가됨] 각 추천 멘트별 피드백 버튼
-                feedback_cols = st.columns([1, 1, 8])
-                if feedback_cols[0].button("👍", key=f"helpful_{i}"):
+                feedback_cols_actions = st.columns([1, 1, 8])
+                if feedback_cols_actions[0].button("👍", key=f"helpful_{i}"):
                     send_feedback(consultation_context, script_text, "helpful")
-                if feedback_cols[1].button("👎", key=f"unhelpful_{i}"):
+                if feedback_cols_actions[1].button("👎", key=f"unhelpful_{i}"):
                     send_feedback(consultation_context, script_text, "not_helpful")
 
 def admin_dashboard():
