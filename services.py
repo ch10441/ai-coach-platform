@@ -79,6 +79,18 @@ class AICoachingService:
         else:
             print(f"✅ RAG DB '{self.index_name}'에 이미 {stats['total_vector_count']}개의 데이터가 존재합니다.")
 
+    def retrieve_relevant_knowledge(self, query, top_k=3):
+        """사용자의 질문과 가장 관련성 높은 지식을 Pinecone에서 찾아 반환합니다."""
+        if not query.strip(): return []
+        try:
+            query_embedding = genai.embed_content(model=self.embedding_model, content=[query])['embedding'][0]
+            results = self.index.query(vector=query_embedding, top_k=top_k, include_metadata=True)
+            return [match['metadata']['text'] for match in results['matches']]
+        except Exception as e:
+            print(f"🔥 Pinecone 검색 중 오류 발생: {e}")
+            return []        
+            
+
     def _summarize_if_needed(self, text, max_length=8000):
         if len(text) <= max_length: return text
         print(f"⚠️ 텍스트가 너무 길어({len(text)}자) 요약을 먼저 실행합니다...")
@@ -162,20 +174,26 @@ class AICoachingService:
         """
 
     def analyze_consultation(self, consultation_text, history):
+        """상담 내용을 분석하고 최종 코칭 결과를 반환합니다."""
         error_message = None
         try:
-            processed_text = self._summarize_if_needed(consultation_text)
-            relevant_knowledge = self.retrieve_relevant_knowledge(processed_text)
-            prompt = self._build_prompt(processed_text, history, relevant_knowledge)
+            # RAG 검색
+            relevant_knowledge = self.retrieve_relevant_knowledge(consultation_text)
+            # 프롬프트 구성
+            prompt = self._build_prompt(consultation_text, history, relevant_knowledge)
+            # Gemini API 호출
             response = self.model.generate_content(prompt)
+            
             if not response.parts:
-                if response.prompt_feedback.block_reason:
+                if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
                     error_message = f"AI 답변이 안전 문제로 차단되었습니다: {response.prompt_feedback.block_reason.name}"
                 else: error_message = "AI로부터 비어있는 응답을 받았습니다."
                 raise ValueError(error_message)
+            
             coaching_result = json.loads(response.text)
             new_history = history + [f"---고객/설계사 대화---\n{consultation_text}", f"---AI 코칭 요약---\n{coaching_result.get('customer_intent')}"]
             return coaching_result, new_history, None
+
         except Exception as e:
             final_error_message = error_message or f"AI 분석 중 알 수 없는 오류 발생: {e}"
             print(f"🔥 {final_error_message}")
