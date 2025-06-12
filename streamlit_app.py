@@ -14,51 +14,45 @@ BACKEND_API_URL = "https://ai-coach-platform-tz4n.onrender.com"
 # 1. 기능별 함수 정의
 # --------------------------------------------------------------------------
 
-def send_feedback(consultation_context, ai_suggestion, rating):
-    """피드백을 백엔드 서버로 전송하는 함수"""
+def send_feedback(consultation_context, ai_suggestion, rating, key_prefix):
+    """피드백을 백엔드 서버로 전송하고, 피드백 상태를 세션에 기록하는 함수"""
     try:
-        # st.session_state에서 user_id를 가져옵니다.
         user_id = st.session_state.get("user_id")
         if not user_id:
             st.toast("오류: 사용자 정보가 없어 피드백을 보낼 수 없습니다.", icon="🔥")
             return
 
-        payload = {
-            "user_id": user_id,
-            "consultation_summary": consultation_context[:1000], # 너무 길지 않게 요약본만 저장
-            "ai_suggestion": ai_suggestion,
-            "rating": rating
-        }
-        # 백엔드의 /feedback API를 호출합니다.
+        payload = {"user_id": user_id, "consultation_summary": consultation_context[:1000], "ai_suggestion": ai_suggestion, "rating": rating}
         response = requests.post(f"{BACKEND_API_URL}/feedback", json=payload, timeout=10)
-
+        
         if response.status_code == 201:
-            st.toast(f"소중한 피드백 감사합니다!", icon="✅")
+            st.toast("소중한 피드백 감사합니다!", icon="✅")
+            # 피드백을 남긴 버튼을 기록하여 다시 누를 수 없도록 함
+            st.session_state.feedback_status[key_prefix] = True
         else:
             st.toast(f"피드백 저장에 실패했습니다: {response.json().get('error')}", icon="🔥")
     except Exception as e:
         st.toast(f"피드백 전송 중 오류 발생: {e}", icon="🔥")
 
 def login_user(username, password):
-    """백엔드에 로그인 요청을 보내고 성공 시 user_id를 포함한 세션 상태를 업데이트합니다."""
+    """백엔드에 로그인 요청을 보내는 함수"""
     try:
         payload = {"username": username, "password": password}
         response = requests.post(f"{BACKEND_API_URL}/login", json=payload, timeout=60)
         if response.status_code == 200 and response.json().get("success"):
-            st.session_state["logged_in"] = True
             user_data = response.json().get("user", {})
-            st.session_state["username"] = user_data.get("username")
-            st.session_state["role"] = user_data.get("role")
-            # [추가됨] 피드백 저장을 위해 user_id를 세션에 저장합니다.
-            st.session_state["user_id"] = user_data.get("id")
+            st.session_state.logged_in = True
+            st.session_state.username = user_data.get("username")
+            st.session_state.role = user_data.get("role")
+            st.session_state.user_id = user_data.get("id")
             st.rerun()
         else:
             st.error(f"로그인 실패: {response.json().get('error', '아이디 또는 비밀번호가 일치하지 않습니다.')}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"서버에 연결할 수 없습니다: {e}")
+    except requests.exceptions.RequestException:
+        st.error("서버에 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해주세요.")
 
 def register_user(payload):
-    """백엔드에 회원가입 요청을 보냅니다."""
+    """백엔드에 회원가입 요청을 보내는 함수"""
     try:
         response = requests.post(f"{BACKEND_API_URL}/register", json=payload)
         if response.status_code == 201 and response.json().get("success"):
@@ -70,20 +64,17 @@ def register_user(payload):
         st.error(f"서버에 연결할 수 없습니다: {e}")
 
 def display_login_page():
-    """로그인과 아이디 생성 탭이 있는 페이지를 구성합니다."""
+    """로그인과 아이디 생성 요청 탭이 있는 페이지"""
     st.header("🔐 AI 코칭 플랫폼")
     st.write("팀원의 아이디와 비밀번호로 로그인해주세요.")
-    
     tab1, tab2 = st.tabs(["로그인", "아이디 생성 요청"])
     with tab1:
         with st.form("login_form"):
             username = st.text_input("아이디")
             password = st.text_input("비밀번호", type="password")
             if st.form_submit_button("로그인"):
-                if username and password:
-                    login_user(username, password)
-                else:
-                    st.error("아이디와 비밀번호를 모두 입력해주세요.")
+                if username and password: login_user(username, password)
+                else: st.error("아이디와 비밀번호를 모두 입력해주세요.")
     with tab2:
         with st.form("register_form"):
             st.info("모든 항목은 필수 입력이며, 등록 후 관리자의 승인이 필요합니다.")
@@ -95,10 +86,8 @@ def display_login_page():
             confirm_password = st.text_input("비밀번호 확인", type="password")
             st.caption("비밀번호는 8자리 이상, 영문, 숫자, 특수문자를 모두 포함해야 합니다.")
             if st.form_submit_button("등록 요청하기"):
-                if not all([new_username, full_name, branch_name, gaia_code, new_password, confirm_password]):
-                    st.error("모든 항목을 입력해주세요.")
-                elif new_password != confirm_password:
-                    st.error("비밀번호가 일치하지 않습니다.")
+                if not all([new_username, full_name, branch_name, gaia_code, new_password, confirm_password]): st.error("모든 항목을 입력해주세요.")
+                elif new_password != confirm_password: st.error("비밀번호가 일치하지 않습니다.")
                 else:
                     payload = {"username": new_username, "password": new_password, "full_name": full_name, "branch_name": branch_name, "gaia_code": gaia_code}
                     register_user(payload)
@@ -119,9 +108,22 @@ def display_coaching_result(result):
     tab1, tab2 = st.tabs(["💡 종합 분석 및 전략", "💬 AI 추천 멘트 모음"])
 
     with tab1:
-        # ... (이전과 동일)
-        pass
+        st.markdown("##### 💡 고객 핵심 니즈")
+        st.info(result.get('customer_intent', '분석 정보 없음'))
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("##### 💖 고객 감정 상태")
+            st.info(result.get('customer_sentiment', '분석 정보 없음'))
+        with col2:
+            st.markdown("##### 👤 추정 고객 성향")
+            st.info(result.get('customer_profile_guess', '분석 정보 없음'))
+        
+        st.markdown("---")
+        st.markdown("##### 🧭 다음 추천 진행 방향")
+        st.success(result.get('next_step_strategy', '분석 정보 없음'))
 
+    # --- 탭 2: [수정됨] 모든 추천 멘트를 이 곳에 모아서 보여줍니다. ---
     with tab2:
         st.markdown("##### 🛡️ 고객 반론 예측 및 추천 대응 멘트")
         st.caption("AI의 제안이 도움이 되셨다면 👍를, 그렇지 않다면 👎를 눌러주세요!")
@@ -202,15 +204,18 @@ def display_ai_coach_ui():
         st.header("📋 AI 상담 코치")
         st.write(f"**{st.session_state.get('username', '설계사')}**님, 환영합니다!")
         if st.button("✨ 새로운 상담 시작하기"):
-            keys_to_clear = ['history', 'last_analysis', 'text_input']
-            for key in keys_to_clear:
+            # 초기화할 세션 상태 키 목록
+            keys_to_clear_on_reset = ['last_analysis', 'last_consultation_text', 'text_input']
+            
+            # history는 반드시 빈 리스트[]로, feedback_status는 빈 딕셔너리{}로 초기화합니다.
+            st.session_state.history = []
+            st.session_state.feedback_status = {}
+            
+            for key in keys_to_clear_on_reset:
                 if key in st.session_state:
                     st.session_state[key] = "" if key == 'text_input' else None
+            
             st.success("새로운 상담 세션을 시작합니다!")
-            st.rerun()
-        if st.button("🚪 로그아웃"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
             st.rerun()
 
     st.title("🚀 AI 실시간 코칭 보조창")
@@ -258,28 +263,27 @@ def display_ai_coach_ui():
     display_coaching_result(st.session_state.get('last_analysis'))
 
 def main_app():
-    """로그인 성공 후 표시될 메인 AI 코칭 플랫폼 화면"""
-    
+    """로그인 성공 후 표시될 전체 페이지 레이아웃 및 로직"""
     with st.sidebar:
         st.header("📋 AI 상담 코치")
         st.write(f"**{st.session_state.get('username', '설계사')}**님, 환영합니다!")
-        
-        # ▼▼▼▼▼ 바로 이 버튼의 로직이 최종적으로 수정되었습니다! ▼▼▼▼▼
         if st.button("✨ 새로운 상담 시작하기"):
-            # 초기화할 세션 상태 키 목록
-            keys_to_clear = ['last_analysis', 'last_consultation_text', 'text_input']
-            
-            # history는 반드시 빈 리스트[]로, feedback_status는 빈 딕셔너리{}로 초기화합니다.
-            st.session_state.history = []
-            st.session_state.feedback_status = {}
-            
-            for key in keys_to_clear:
-                if key in st.session_state:
-                    # text_input은 빈 문자열로, 나머지는 None으로 설정
-                    st.session_state[key] = "" if key == 'text_input' else None
-            
-            st.success("새로운 상담 세션을 시작합니다!")
-            st.rerun() # 페이지를 새로고침하여 모든 변경사항을 즉시 반영
+            st.session_state.history = []; st.session_state.last_analysis = None
+            st.session_state.feedback_status = {}; st.session_state.last_consultation_text = ""
+            if 'text_input' in st.session_state: st.session_state.text_input = ""
+            if 'file_uploader' in st.session_state: st.session_state.file_uploader = None
+            st.rerun()
+        if st.button("🚪 로그아웃"):
+            for key in list(st.session_state.keys()): del st.session_state[key]
+            st.rerun()
+
+    user_role = st.session_state.get("role", "user")
+    if user_role == 'admin':
+        main_tab, admin_tab = st.tabs(["🚀 AI 코칭 보조창", "👑 관리자 페이지"])
+        with main_tab: display_ai_coach_ui()
+        with admin_tab: admin_dashboard()
+    else:
+        display_ai_coach_ui()
 
 # --------------------------------------------------------------------------
 # 4. 앱의 메인 실행 로직
