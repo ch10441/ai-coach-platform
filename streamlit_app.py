@@ -15,22 +15,16 @@ BACKEND_API_URL = "https://ai-coach-platform-tz4n.onrender.com"
 # --------------------------------------------------------------------------
 
 def send_feedback(consultation_context, ai_suggestion, rating, key_prefix):
-    """피드백을 백엔드 서버로 전송하고, 피드백 상태를 세션에 기록하는 함수"""
+    """피드백을 백엔드 서버로 전송하는 함수"""
     try:
-        user_id = st.session_state.get("user_id")
-        if not user_id:
-            st.toast("오류: 사용자 정보가 없어 피드백을 보낼 수 없습니다.", icon="🔥")
-            return
-
-        payload = {"user_id": user_id, "consultation_summary": consultation_context[:1000], "ai_suggestion": ai_suggestion, "rating": rating}
+        payload = { "user_id": st.session_state.get("user_id"), "consultation_summary": consultation_context[:1000], "ai_suggestion": ai_suggestion, "rating": rating }
         response = requests.post(f"{BACKEND_API_URL}/feedback", json=payload, timeout=10)
-        
         if response.status_code == 201:
             st.toast("소중한 피드백 감사합니다!", icon="✅")
-            # 피드백을 남긴 버튼을 기록하여 다시 누를 수 없도록 함
             st.session_state.feedback_status[key_prefix] = True
+            st.rerun()
         else:
-            st.toast(f"피드백 저장에 실패했습니다: {response.json().get('error')}", icon="🔥")
+            st.toast(f"피드백 저장 실패: {response.json().get('error')}", icon="🔥")
     except Exception as e:
         st.toast(f"피드백 전송 중 오류 발생: {e}", icon="🔥")
 
@@ -103,66 +97,45 @@ def display_coaching_result(result):
     consultation_context = st.session_state.get('last_consultation_text', '')
 
     # [수정됨] 탭 구조를 2개로 단순화하여 가독성을 높입니다.
-    tab1, tab2 = st.tabs(["💡 종합 분석 및 전략", "💬 AI 추천 멘트 모음"])
+    with st.container(border=True):
+        st.markdown("##### 💡 종합 분석 및 전략")
+        st.info(f"**고객 핵심 니즈:** {result.get('customer_intent', '분석 정보 없음')}")
+        st.info(f"**고객 감정 상태:** {result.get('customer_sentiment', '분석 정보 없음')}")
+        st.info(f"**추정 고객 성향:** {result.get('customer_profile_guess', '분석 정보 없음')}")
+        st.success(f"**다음 추천 진행 방향:** {result.get('next_step_strategy', '분석 정보 없음')}")
 
-    # --- 탭 1: 종합 분석 및 전략 ---
-    with tab1:
-        st.markdown("##### 💡 고객 핵심 니즈")
-        st.info(result.get('customer_intent', '분석 정보 없음'))
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("##### 💖 고객 감정 상태")
-            st.info(result.get('customer_sentiment', '분석 정보 없음'))
-        with col2:
-            st.markdown("##### 👤 추정 고객 성향")
-            st.info(result.get('customer_profile_guess', '분석 정보 없음'))
-        
-        st.markdown("---")
-        st.markdown("##### 🧭 다음 추천 진행 방향")
-        st.success(result.get('next_step_strategy', '분석 정보 없음'))
+    st.markdown("---")
+    
+    st.markdown("##### 🛡️ 고객 반론 예측 및 추천 대응 멘트")
+    st.caption("AI의 제안이 도움이 되셨다면 👍를, 그렇지 않다면 👎를 눌러주세요!")
+    strategy_data = result.get('objection_handling_strategy', {})
+    example_script = strategy_data.get('example_script', '추천 멘트 없음')
+    
+    with st.container(border=True):
+        st.warning(f"**예상 반론:** {strategy_data.get('predicted_objection', '분석된 반론 없음')}")
+        st.write(example_script)
+        if example_script != '추천 멘트 없음':
+            feedback_key_strategy = f"feedback_for_strategy_{example_script[:30]}"
+            is_disabled_strategy = st.session_state.feedback_status.get(feedback_key_strategy, False)
+            feedback_cols = st.columns(10)
+            if feedback_cols[0].button("👍", key="helpful_strategy", disabled=is_disabled_strategy):
+                send_feedback(consultation_context, example_script, "helpful", feedback_key_strategy)
+            if feedback_cols[1].button("👎", key="unhelpful_strategy", disabled=is_disabled_strategy):
+                send_feedback(consultation_context, example_script, "not_helpful", feedback_key_strategy)
 
-    # --- 탭 2: [수정됨] 모든 추천 멘트를 이 곳에 모아서 보여줍니다. ---
-    with tab2:
-        st.markdown("##### 🛡️ 고객 반론 예측 및 추천 대응 멘트")
-        st.caption("AI의 제안이 도움이 되셨다면 👍를, 그렇지 않다면 👎를 눌러주세요!")
-        
-        strategy_data = result.get('objection_handling_strategy', {})
-        example_script = strategy_data.get('example_script', '추천 멘트 없음')
-        
-        # st.container(border=True)를 사용하여 시각적으로 그룹화합니다.
-        with st.container(border=True):
-            st.warning(f"**예상 반론:** {strategy_data.get('predicted_objection', '분석된 반론 없음')}")
-            st.success(f"**대응 전략:** {strategy_data.get('counter_strategy', '분석된 전략 없음')}")
-            st.write("---")
-            st.write(example_script)
+    st.markdown("##### 💬 추가 추천 멘트 옵션")
+    for i, action in enumerate(result.get('recommended_actions', [])):
+        with st.expander(f"**옵션 {i+1}: {action.get('style', '')}**"):
+            script_text = action.get('script', '')
+            st.write(script_text)
+            feedback_key_action = f"feedback_for_action_{i}"
+            is_disabled_action = st.session_state.feedback_status.get(feedback_key_action, False)
+            feedback_cols_actions = st.columns(10)
+            if feedback_cols_actions[0].button("👍", key=f"helpful_{i}", disabled=is_disabled_action):
+                send_feedback(consultation_context, script_text, "helpful", feedback_key_action)
+            if feedback_cols_actions[1].button("👎", key=f"unhelpful_{i}", disabled=is_disabled_action):
+                send_feedback(consultation_context, script_text, "not_helpful", feedback_key_action)
 
-            if example_script != '추천 멘트 없음':
-                feedback_key_strategy = f"feedback_for_strategy_{example_script[:30]}"
-                is_disabled_strategy = st.session_state.feedback_status.get(feedback_key_strategy, False)
-                
-                feedback_cols = st.columns(10)
-                if feedback_cols[0].button("👍", key="helpful_strategy", disabled=is_disabled_strategy):
-                    send_feedback(consultation_context, example_script, "helpful", feedback_key_strategy)
-
-                if feedback_cols[1].button("👎", key="unhelpful_strategy", disabled=is_disabled_strategy):
-                    send_feedback(consultation_context, example_script, "not_helpful", feedback_key_strategy)
-
-        st.markdown("---")
-        st.markdown("##### 💬 추가 추천 멘트 옵션")
-        for i, action in enumerate(result.get('recommended_actions', [])):
-            with st.expander(f"**옵션 {i+1}: {action.get('style', '')}**"):
-                script_text = action.get('script', '')
-                st.write(script_text)
-                
-                feedback_key_action = f"feedback_for_action_{i}"
-                is_disabled_action = st.session_state.feedback_status.get(feedback_key_action, False)
-                
-                feedback_cols_actions = st.columns(10)
-                if feedback_cols_actions[0].button("👍", key=f"helpful_{i}", disabled=is_disabled_action):
-                    send_feedback(consultation_context, script_text, "helpful", feedback_key_action)
-                if feedback_cols_actions[1].button("👎", key=f"unhelpful_{i}", disabled=is_disabled_action):
-                    send_feedback(consultation_context, script_text, "not_helpful", feedback_key_action)
 
 def admin_dashboard():
     """관리자 전용 대시보드 UI 및 기능"""
@@ -188,113 +161,65 @@ def admin_dashboard():
         else: st.error("사용자 목록을 불러오는 데 실패했습니다.")
     except requests.exceptions.RequestException as e: st.error(f"서버에 연결할 수 없습니다: {e}")
 
-def display_ai_coach_ui():
-    """AI 코칭 보조창의 메인 UI를 그리는 함수"""
-    with st.sidebar:
-        st.header("📋 AI 상담 코치")
-        st.write(f"**{st.session_state.get('username', '설계사')}**님, 환영합니다!")
-        if st.button("✨ 새로운 상담 시작하기"):
-            # 초기화할 세션 상태 키 목록
-            keys_to_clear_on_reset = ['last_analysis', 'last_consultation_text', 'text_input']
-            
-            # history는 반드시 빈 리스트[]로, feedback_status는 빈 딕셔너리{}로 초기화합니다.
-            st.session_state.history = []
-            st.session_state.feedback_status = {}
-            
-            for key in keys_to_clear_on_reset:
-                if key in st.session_state:
-                    st.session_state[key] = "" if key == 'text_input' else None
-            
-            st.success("새로운 상담 세션을 시작합니다!")
-            st.rerun()
-
+def display_ai_coach_content():
+    """AI 코칭 보조창의 메인 콘텐츠만 그리는 함수"""
     st.title("🚀 AI 실시간 코칭 보조창")
-    st.markdown("고객과의 상담 내용을 입력하거나 PDF 파일을 업로드하면, AI가 실시간으로 분석하고 코칭을 제공합니다.")
-
-    # --- [복원됨] 상담 내용 입력 영역 (텍스트 + PDF) ---
-    st.subheader("1. 상담 내용 입력하기")
-    input_text = st.text_area("여기에 고객과의 대화 내용을 붙여넣어 주세요.", height=200, key="text_input")
-    st.markdown("---")
-    uploaded_file = st.file_uploader("또는 PDF 파일을 업로드하세요.", type="pdf", key="file_uploader")
-
+    st.markdown("고객과의 상담 내용을 입력하면, AI가 실시간으로 분석하고 코칭을 제공합니다.")
+    input_text = st.text_area("여기에 고객과의 대화 내용을 붙여넣어 주세요.", height=250, key="text_input_key")
     if st.button("🤖 AI 코칭 시작하기", type="primary"):
-        consultation_text = ""
-        source = ""
-        if uploaded_file is not None:
-            try:
-                reader = PdfReader(uploaded_file)
-                pdf_text = "".join(page.extract_text() for page in reader.pages)
-                if pdf_text.strip():
-                    consultation_text = pdf_text
-                    source = f"'{uploaded_file.name}' 파일"
-                else: st.error("업로드된 PDF 파일에서 텍스트를 추출하지 못했습니다.")
-            except Exception as e: st.error(f"PDF 파일 처리 중 오류가 발생했습니다: {e}")
-        elif input_text.strip():
-            consultation_text = input_text
-            source = "텍스트 입력창"
-
-        if consultation_text:
-            st.session_state['last_consultation_text'] = consultation_text
-            with st.spinner(f'{source}의 내용을 AI가 분석 중입니다...'):
+        if input_text.strip():
+            st.session_state['last_consultation_text'] = input_text
+            with st.spinner('AI가 상담 내용을 분석 중입니다...'):
                 try:
-                    payload = {"consultation_text": consultation_text, "history": st.session_state.get('history', [])}
+                    payload = {"consultation_text": input_text, "history": st.session_state.get('history', [])}
                     response = requests.post(f"{BACKEND_API_URL}/analyze", json=payload, timeout=60)
                     response_data = response.json()
-
                     if response.status_code == 200 and response_data.get("success"):
                         st.session_state.last_analysis = response_data.get("analysis")
                         st.session_state.history = response_data.get("history")
                         st.success("✅ AI 코칭 분석이 완료되었습니다!")
-                    else:
-                        # [수정됨] 백엔드에서 전달된 상세 오류 메시지를 표시합니다.
-                        error_detail = response_data.get('error', '알 수 없는 오류')
-                        st.error(f"분석 실패: {error_detail}")
-                
-                except requests.exceptions.RequestException as e:
-                    st.error(f"서버에 분석을 요청하는 중 오류가 발생했습니다: {e}")
-                except json.JSONDecodeError:
-                    st.error("분석 실패: 서버로부터 유효하지 않은 응답을 받았습니다. 백엔드 서버의 로그를 확인해주세요.")
+                    else: st.error(f"분석 실패: {response_data.get('error', '알 수 없는 오류')}")
+                except Exception as e: st.error(f"분석 요청 중 오류가 발생했습니다: {e}")
         else:
-            st.warning("분석할 상담 내용을 텍스트로 입력하거나 PDF 파일을 업로드해주세요.")
-    
+            st.warning("분석할 상담 내용을 입력해주세요.")
     display_coaching_result(st.session_state.get('last_analysis'))
 
-def main_app():
-    """로그인 성공 후 표시될 전체 페이지 레이아웃 및 로직"""
+# --- 3. 앱의 메인 실행 로직 ---
+
+# [수정됨] 세션 상태 초기화를 맨 위로 올려서, 스크립트 실행 시 항상 가장 먼저 실행되도록 보장합니다.
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = ""
+    st.session_state.user_id = None
+    st.session_state.history = []
+    st.session_state.last_analysis = None
+    st.session_state.feedback_status = {}
+    st.session_state.last_consultation_text = ""
+
+# [수정됨] 로그인 상태에 따라 보여줄 페이지를 명확하게 결정하는 최종 구조
+if not st.session_state.logged_in:
+    display_login_page()
+else:
+    # --- 로그인 후 공통 사이드바 ---
     with st.sidebar:
         st.header("📋 AI 상담 코치")
         st.write(f"**{st.session_state.get('username', '설계사')}**님, 환영합니다!")
         if st.button("✨ 새로운 상담 시작하기"):
             st.session_state.history = []; st.session_state.last_analysis = None
             st.session_state.feedback_status = {}; st.session_state.last_consultation_text = ""
-            if 'text_input' in st.session_state: st.session_state.text_input = ""
-            if 'file_uploader' in st.session_state: st.session_state.file_uploader = None
+            st.session_state.text_input_key = "" # 텍스트 입력창도 초기화
             st.rerun()
         if st.button("🚪 로그아웃"):
             for key in list(st.session_state.keys()): del st.session_state[key]
             st.rerun()
 
-    user_role = st.session_state.get("role", "user")
-    if user_role == 'admin':
+    # --- 역할에 따른 메인 콘텐츠 ---
+    if st.session_state.get("role") == 'admin':
         main_tab, admin_tab = st.tabs(["🚀 AI 코칭 보조창", "👑 관리자 페이지"])
-        with main_tab: display_ai_coach_ui()
-        with admin_tab: admin_dashboard()
-    else:
-        display_ai_coach_ui()
-
-# --------------------------------------------------------------------------
-# 4. 앱의 메인 실행 로직
-# --------------------------------------------------------------------------
-
-# 세션 상태 초기화
-if "logged_in" not in st.session_state: st.session_state.logged_in = False
-if 'history' not in st.session_state: st.session_state.history = []
-if 'last_analysis' not in st.session_state: st.session_state.last_analysis = None
-if 'feedback_status' not in st.session_state: st.session_state.feedback_status = {} # 피드백 상태 추가
-if 'last_consultation_text' not in st.session_state: st.session_state.last_consultation_text = ""
-
-# 로그인 상태에 따라 다른 페이지(함수)를 보여줌
-if st.session_state.logged_in:
-    main_app()
-else:
-    display_login_page()
+        with main_tab:
+            display_ai_coach_content()
+        with admin_tab:
+            admin_dashboard()
+    else: # 일반 사용자의 경우
+        display_ai_coach_content()
