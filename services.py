@@ -33,7 +33,7 @@ class AICoachingService:
         self.index_name = "insurance-coach"
         self.embedding_model = 'models/text-embedding-004'
         self._initialize_pinecone_index()
-        self.model = genai.GenerativeModel('gemini-1.5-pro-latest', generation_config={"response_mime_type": "application/json"})
+        self.model = genai.GenerativeModel('gemini-2.5-flash-lite', generation_config={"response_mime_type": "application/json"})
         print("✅ AI 코칭 서비스가 (Pinecone과 함께) 성공적으로 초기화되었습니다.")
 
     def _initialize_pinecone_index(self):
